@@ -11,8 +11,8 @@
   const SEGMENTS = 6;
   const colors = $derived(
     variant === 'input'
-      ? ['#26c6da', '#26c6da', '#26c6da', '#26c6da', '#ff9f0a', '#ff453a']
-      : ['#4caf50', '#4caf50', '#4caf50', '#4caf50', '#ffd54f', '#ff453a']
+      ? ['#82cfff', '#82cfff', '#82cfff', '#82cfff', '#ffb4aa', '#ffb4ab']
+      : ['#53e16f', '#53e16f', '#53e16f', '#53e16f', '#72fe88', '#ffb4ab']
   );
 </script>
 

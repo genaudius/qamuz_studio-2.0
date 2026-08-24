@@ -9,7 +9,7 @@
   import MiniMeter from './MiniMeter.svelte';
   import { INSTRUMENTS, type InstrumentName } from '$lib/audio/backend';
   import { rackInstrumentSound } from '$lib/audio/instruments';
-  import { engine, projectStore } from '$lib/stores';
+  import { engine, projectStore, workspace } from '$lib/stores';
 
   const instruments = $derived(projectStore.project.vRack.instruments);
 
@@ -37,6 +37,7 @@
   }
 </script>
 
+<div class="rack">
 <div class="panel-title">
   <Icon name="keyboard" size={12} />
   <span>V-Rack</span>
@@ -50,6 +51,19 @@
 </div>
 
 <div class="list">
+  <button
+    class="slot plugin"
+    class:on={workspace.module === 'mastering'}
+    onclick={() => workspace.open('mastering')}
+  >
+    <div class="slot-head">
+      <span class="mark">Q</span>
+      <span class="slot-name">QAMUZ MASTER PRO</span>
+      <span class="led" class:on={workspace.module === 'mastering'}></span>
+    </div>
+    <span class="routing">Insert · mastering</span>
+  </button>
+
   {#if instruments.length === 0}
     <p class="empty">
       No instruments. Add one, then point a MIDI track's output at it from the inspector.
@@ -136,8 +150,16 @@
     </div>
   {/each}
 </div>
+</div>
 
 <style>
+  .rack {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   .add {
     margin-left: auto;
     width: 20px;
@@ -168,6 +190,43 @@
     border-radius: 6px;
     background: var(--bg-control);
     border: 1px solid var(--stroke);
+  }
+
+  .slot.plugin {
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .slot.plugin:hover,
+  .slot.plugin.on {
+    border-color: var(--accent);
+    background: var(--accent-faint);
+  }
+
+  .mark {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: var(--accent-strong);
+    color: var(--on-primary);
+    font-size: 10px;
+    font-weight: 800;
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+
+  .led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    flex: none;
+  }
+
+  .led.on {
+    background: var(--play);
+    box-shadow: 0 0 8px var(--play);
   }
 
   .slot-head {
@@ -213,8 +272,8 @@
   }
 
   .mute.on {
-    background: rgba(255, 152, 0, 0.24);
-    color: #ff9800;
+    background: rgba(255, 180, 170, 0.24);
+    color: var(--mute);
   }
 
   .slot-controls input[type='range'] {

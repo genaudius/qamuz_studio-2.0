@@ -140,8 +140,8 @@
     height: 9px;
     margin-bottom: -4px;
     border-radius: 2px;
-    background: linear-gradient(#5a5a62, #35353b);
-    border: 1px solid #16161a;
+    background: linear-gradient(var(--bg-highest), var(--bg-elevated));
+    border: 1px solid var(--bg-inset);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   }
 

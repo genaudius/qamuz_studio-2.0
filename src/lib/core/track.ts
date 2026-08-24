@@ -29,17 +29,17 @@ export const TRACK_COLORS: TrackColor[] = [
   'gray'
 ];
 
-/** Hex values are the ones the 1.0 build renders, so projects look identical. */
+/** Stitch midnight palette — cyan / coral / green / purple. */
 export const TRACK_COLOR_HEX: Record<TrackColor, string> = {
-  red: '#FF5A5A',
-  orange: '#FF9F43',
-  yellow: '#FECA57',
-  green: '#5AD45A',
-  cyan: '#48DBFB',
-  blue: '#54A0FF',
-  purple: '#A55EEA',
-  pink: '#FF6B9D',
-  gray: '#8395A7'
+  red: '#ffb4ab',
+  orange: '#ffb4aa',
+  yellow: '#72fe88',
+  green: '#53e16f',
+  cyan: '#82cfff',
+  blue: '#00aeef',
+  purple: '#c9a0ff',
+  pink: '#ffb4aa',
+  gray: '#87929b'
 };
 
 export type PluginType =

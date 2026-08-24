@@ -46,12 +46,16 @@ function referenceFor(
   };
 }
 
-async function decode(bytes: ArrayBuffer): Promise<AudioBuffer> {
+export async function decodeAudioBytes(bytes: ArrayBuffer): Promise<AudioBuffer> {
   const context = engine.backend.audioContext;
   if (!context) throw new Error('The audio engine is not running yet');
 
   // decodeAudioData detaches the buffer, so hand it a copy.
   return context.decodeAudioData(bytes.slice(0));
+}
+
+async function decode(bytes: ArrayBuffer): Promise<AudioBuffer> {
+  return decodeAudioBytes(bytes);
 }
 
 async function place(

@@ -28,6 +28,7 @@
     | 'trash'
     | 'chevron-down'
     | 'chevron-right'
+    | 'chevron-left'
     | 'close'
     | 'save'
     | 'folder'
@@ -36,7 +37,14 @@
     | 'zoom-out'
     | 'send'
     | 'wand'
-    | 'grip';
+    | 'grip'
+    | 'home'
+    | 'layout'
+    | 'disc'
+    | 'download'
+    | 'gear'
+    | 'sliders'
+    | 'user';
 
   interface Props {
     name: IconName;
@@ -72,6 +80,7 @@
     trash: 'M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13M10 11v6M14 11v6',
     'chevron-down': 'M6 9l6 6 6-6',
     'chevron-right': 'M9 6l6 6-6 6',
+    'chevron-left': 'M15 6l-6 6 6 6',
     close: 'M6 6l12 12M18 6L6 18',
     save: 'M4 4h13l3 3v13H4zM8 4v6h8V4M8 15h8',
     folder: 'M3 6h6l2 2h10v11H3z',
@@ -80,7 +89,14 @@
     'zoom-out': 'M11 4a7 7 0 100 14 7 7 0 000-14zM16 16l4 4M8 11h6',
     send: 'M4 12l16-8-6 8 6 8-16-8z',
     wand: 'M5 19L16 8l3 3L8 22H5v-3zM18 3l1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2z',
-    grip: 'M8 8h.01M8 12h.01M8 16h.01M16 8h.01M16 12h.01M16 16h.01'
+    grip: 'M8 8h.01M8 12h.01M8 16h.01M16 8h.01M16 12h.01M16 16h.01',
+    home: 'M3 12l9-9 9 9M5 10v11h5v-6h4v6h5V10',
+    layout: 'M3 4h18v16H3zM9 4v16M3 10h6',
+    disc: 'M12 4a8 8 0 100 16 8 8 0 000-16zM12 10a2 2 0 110 4 2 2 0 010-4z',
+    download: 'M12 4v12m0 0l-4-4m4 4l4-4M5 20h14',
+    gear: 'M12 8a4 4 0 100 8 4 4 0 000-8zM4.5 12l1.2-2.1 2.3.4 1.2-2.2 2.1 1.2L12 5l1.7 2.3 2.1-1.2 1.2 2.2 2.3-.4L21.5 12l-1.2 2.1-2.3-.4-1.2 2.2-2.1-1.2L12 19l-1.7-2.3-2.1 1.2-1.2-2.2-2.3.4L4.5 12z',
+    sliders: 'M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0M14 5v4M8 10v4M16 15v4',
+    user: 'M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c1.8-3.2 4.7-5 8-5s6.2 1.8 8 5'
   };
 </script>
 

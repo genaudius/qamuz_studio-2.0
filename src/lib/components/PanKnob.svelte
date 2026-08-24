@@ -90,8 +90,8 @@
   .knob {
     position: relative;
     border-radius: 50%;
-    background: radial-gradient(circle at 50% 35%, #3c3c42, #232327);
-    border: 1px solid #16161a;
+    background: radial-gradient(circle at 50% 35%, var(--bg-highest), var(--bg-control));
+    border: 1px solid var(--bg-inset);
     cursor: ns-resize;
   }
 

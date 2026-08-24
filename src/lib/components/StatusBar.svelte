@@ -68,9 +68,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 24px;
+    height: 28px;
     padding: 0 12px;
-    background: var(--bg-window);
+    background: var(--bg-control);
     border-top: 1px solid var(--stroke);
     flex: none;
   }

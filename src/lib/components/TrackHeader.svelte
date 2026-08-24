@@ -255,7 +255,7 @@
     gap: 3px;
     padding: 2px 5px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--bg-elevated);
     font-size: 10px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -264,7 +264,7 @@
   }
 
   .pill.instrument {
-    background: rgba(165, 94, 234, 0.28);
+    background: rgba(201, 160, 255, 0.28);
     color: var(--text-primary);
   }
 
@@ -282,13 +282,13 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.18);
+    background: var(--stroke);
     flex: none;
   }
 
   .dot.armed {
-    background: #4caf50;
-    box-shadow: 0 0 4px rgba(76, 175, 80, 0.8);
+    background: var(--play);
+    box-shadow: 0 0 4px rgba(83, 225, 111, 0.8);
   }
 
   .controls {
@@ -323,10 +323,10 @@
   }
 
   .mute.on {
-    color: #ff9800;
+    color: var(--mute);
   }
 
   .solo.on {
-    color: #ffd54f;
+    color: var(--solo);
   }
 </style>

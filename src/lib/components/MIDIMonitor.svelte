@@ -63,7 +63,7 @@
 
   .light.active {
     background: var(--time);
-    box-shadow: 0 0 5px rgba(50, 215, 75, 0.9);
+    box-shadow: 0 0 5px rgba(83, 225, 111, 0.9);
   }
 
   select {

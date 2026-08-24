@@ -10,7 +10,7 @@
   import { quantize, toBeats } from '$lib/core/time';
   import { TRACK_COLOR_HEX, type Track } from '$lib/core/track';
   import type { Clip } from '$lib/core/clip';
-  import { engine, projectStore } from '$lib/stores';
+  import { engine, projectStore, workspace } from '$lib/stores';
 
   interface Props {
     clip: Clip;
@@ -171,7 +171,7 @@
   function openEditor() {
     projectStore.selectClip(clip.id);
     if (clip.content.kind === 'midi') {
-      projectStore.bottomPanel = 'pianoRoll';
+      workspace.open('pianoRoll');
       engine.auditionNote(track.id, 60, 120);
     }
   }
@@ -228,7 +228,7 @@
     top: 2px;
     border-radius: 4px;
     border: 1px solid color-mix(in srgb, var(--clip-color) 70%, black);
-    background: color-mix(in srgb, var(--clip-color) 45%, #131315);
+    background: color-mix(in srgb, var(--clip-color) 45%, #131313);
     overflow: hidden;
     cursor: grab;
   }
@@ -254,7 +254,7 @@
   .clip-name {
     font-size: 9px;
     font-weight: 500;
-    color: #fff;
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -263,7 +263,7 @@
   .badge {
     font-size: 8px;
     font-weight: 700;
-    color: #ff9800;
+    color: var(--mute);
   }
 
   .clip-body {
@@ -280,7 +280,7 @@
     position: absolute;
     height: 3px;
     border-radius: 1px;
-    background: #fff;
+    background: var(--text-primary);
   }
 
   .resize-handle {

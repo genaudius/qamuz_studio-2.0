@@ -436,6 +436,21 @@ export class ProjectStore {
   }
 
   /**
+   * Track-based piano roll: reuse the first MIDI clip, or create a master clip
+   * starting at beat 0 the way TrackPianoRollView does in the 1.0 clone.
+   */
+  ensureMIDIClip(trackID: string, startBeat = 0, lengthBeats = 16): Clip | null {
+    const track = this.project.tracks.find((t) => t.id === trackID);
+    if (!track) return null;
+    const existing = track.clips.find((clip) => clip.content.kind === 'midi');
+    if (existing) {
+      this.selectClip(existing.id);
+      return existing;
+    }
+    return this.addEmptyMIDIClip(trackID, startBeat, lengthBeats);
+  }
+
+  /**
    * Registers an imported file in the project manifest and drops a clip for it
    * on a track, as one undo step.
    */

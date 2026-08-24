@@ -395,17 +395,17 @@
   }
 
   .toggle.on {
-    background: rgba(255, 152, 0, 0.22);
-    color: #ff9800;
+    background: rgba(255, 180, 170, 0.22);
+    color: var(--mute);
   }
 
   .toggle.solo.on {
-    background: rgba(255, 213, 79, 0.22);
-    color: #ffd54f;
+    background: rgba(114, 254, 136, 0.22);
+    color: var(--solo);
   }
 
   .toggle.arm.on {
-    background: rgba(255, 69, 58, 0.22);
+    background: rgba(255, 180, 170, 0.22);
     color: var(--record);
   }
 
@@ -428,7 +428,7 @@
   }
 
   .clip-actions .danger:hover {
-    background: rgba(255, 69, 58, 0.2);
+    background: rgba(255, 180, 170, 0.2);
     color: var(--record);
   }
 

@@ -161,16 +161,16 @@
     padding: 20px 24px 16px;
     border-radius: 14px;
     background: var(--bg-elevated);
-    border: 1px solid rgba(191, 90, 242, 0.35);
+    border: 1px solid rgba(201, 160, 255, 0.35);
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
   }
 
   .dialog.midi {
-    border-color: rgba(100, 210, 255, 0.35);
+    border-color: rgba(130, 207, 255, 0.35);
   }
 
   .dialog.edit {
-    border-color: rgba(255, 159, 10, 0.45);
+    border-color: rgba(255, 180, 170, 0.45);
   }
 
   header {
@@ -199,7 +199,7 @@
   .badge {
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(191, 90, 242, 0.18);
+    background: rgba(201, 160, 255, 0.18);
     color: var(--ai);
     font-size: 11px;
   }
@@ -239,7 +239,7 @@
   }
 
   .model.active {
-    background: rgba(191, 90, 242, 0.16);
+    background: rgba(201, 160, 255, 0.16);
     box-shadow: inset 0 0 0 1px var(--ai);
   }
 
@@ -278,8 +278,8 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: linear-gradient(90deg, #7c3aed, #2563eb);
-    color: white;
+    background: linear-gradient(90deg, var(--ai), var(--accent-strong));
+    color: var(--on-primary);
   }
 
   .go:disabled {
@@ -287,7 +287,7 @@
   }
 
   .dialog.edit .go {
-    background: linear-gradient(90deg, #f59e0b, #eab308);
-    color: #111;
+    background: linear-gradient(90deg, var(--tempo), var(--solo));
+    color: var(--on-play);
   }
 </style>

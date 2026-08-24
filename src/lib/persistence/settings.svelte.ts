@@ -23,6 +23,10 @@ export interface AppSettings {
   /** Local fallbacks. Prefer the edge proxies so keys never leave the machine. */
   anthropicKey?: string;
   elevenLabsKey?: string;
+  /** GenAudius / Modal runtime that Maestro calls. */
+  maestroBaseUrl?: string;
+  modalGenerateUrl?: string;
+  modalApiToken?: string;
 }
 
 const DEFAULTS: AppSettings = { recentProjects: [] };

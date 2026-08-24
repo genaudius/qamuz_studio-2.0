@@ -7,8 +7,8 @@
 
   import Icon from './Icon.svelte';
   import MIDIMonitor from './MIDIMonitor.svelte';
-  import RecentProjects from './RecentProjects.svelte';
-  import { engine, projectStore, transport } from '$lib/stores';
+  import UserMenu from './UserMenu.svelte';
+  import { engine, projectStore, transport, workspace } from '$lib/stores';
   import { formatBarsBeats, formatClock } from '$lib/core/time';
 
   interface Props {
@@ -213,26 +213,6 @@
   <div class="divider-v"></div>
 
   <div class="group">
-    <button class="chip" title="New project" onclick={onNewProject}>
-      <Icon name="file-plus" size={12} /> New
-    </button>
-    <RecentProjects />
-    <button class="chip" class:dirty={projectStore.isDirty} title="Save project" onclick={onSaveProject}>
-      <Icon name="save" size={12} /> Save
-    </button>
-  </div>
-
-  <div class="spacer"></div>
-
-  <div class="group">
-    <span class="project-name">
-      {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
-    </span>
-  </div>
-
-  <div class="divider-v"></div>
-
-  <div class="group">
     <button
       class="icon-btn"
       title={projectStore.canUndo
@@ -255,38 +235,10 @@
     </button>
   </div>
 
-  <div class="divider-v"></div>
-
   <div class="group">
     <button
       class="icon-btn"
-      class:active={projectStore.showVRack}
-      title="V-Rack"
-      onclick={() => (projectStore.showVRack = !projectStore.showVRack)}
-    >
-      <Icon name="keyboard" size={14} />
-    </button>
-    <button
-      class="icon-btn"
-      class:active={projectStore.bottomPanel === 'pianoRoll'}
-      title="Piano roll"
-      onclick={() =>
-        (projectStore.bottomPanel = projectStore.bottomPanel === 'pianoRoll' ? 'none' : 'pianoRoll')}
-    >
-      <Icon name="pianoroll" size={14} />
-    </button>
-    <button
-      class="icon-btn"
-      class:active={projectStore.bottomPanel === 'mixer'}
-      title="Mixer"
-      onclick={() =>
-        (projectStore.bottomPanel = projectStore.bottomPanel === 'mixer' ? 'none' : 'mixer')}
-    >
-      <Icon name="mixer" size={14} />
-    </button>
-    <button
-      class="icon-btn"
-      class:active={projectStore.showInspector}
+      class:active={projectStore.showInspector && workspace.showsArrange}
       title="Inspector"
       onclick={() => (projectStore.showInspector = !projectStore.showInspector)}
     >
@@ -294,24 +246,27 @@
     </button>
     <button
       class="icon-btn ai"
-      class:active={projectStore.showAI}
-      title="AI assistant"
-      onclick={() => (projectStore.showAI = !projectStore.showAI)}
-    >
-      <Icon name="sparkles" size={14} />
-    </button>
-    <button
-      class="icon-btn ai"
       class:active={projectStore.aiFillMode}
       title="Generative Fill — drag a beat range on a track"
       onclick={() => {
         projectStore.aiFillMode = !projectStore.aiFillMode;
-        if (projectStore.aiFillMode) projectStore.showAI = true;
-        else projectStore.setRangeSelection(null);
+        if (projectStore.aiFillMode) {
+          workspace.open('arrange');
+          projectStore.showAI = true;
+        } else projectStore.setRangeSelection(null);
       }}
     >
       <Icon name="wand" size={14} />
     </button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="group">
+    <span class="project-name">
+      {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
+    </span>
+    <UserMenu {onNewProject} {onSaveProject} />
   </div>
 </header>
 
@@ -319,27 +274,46 @@
   .transport {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 16px;
     padding: 8px 16px;
-    background: var(--bg-window);
+    min-height: 56px;
+    background: var(--bg-highest);
     border-bottom: 1px solid var(--stroke);
     flex: none;
+    overflow-x: auto;
   }
 
   .group {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
   }
 
   .spacer {
     flex: 1;
   }
 
-  .play {
-    width: 32px;
-    height: 28px;
-    color: var(--text-primary);
+  .transport :global(.icon-btn) {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--stroke);
+    background: var(--bg-control);
+  }
+
+  .transport :global(.icon-btn.play) {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    color: var(--play);
+    box-shadow: 0 0 10px rgba(83, 225, 111, 0.35);
+    border: 1px solid var(--stroke);
+    background: var(--bg-control);
+  }
+
+  .record {
+    color: var(--record);
   }
 
   .record.armed {
@@ -361,21 +335,18 @@
     min-width: 84px;
   }
 
-  .bars .readout-value {
-    color: var(--text-primary);
-  }
-
   .time {
-    min-width: 94px;
+    min-width: 120px;
   }
 
   .time .readout-value {
-    color: var(--time);
+    color: var(--accent);
+    font-size: 24px;
+    font-weight: 500;
   }
 
   .tempo {
     min-width: 62px;
-    background: rgba(0, 0, 0, 0.3);
   }
 
   .tempo-value {
@@ -399,7 +370,6 @@
   }
 
   .sig {
-    background: rgba(0, 0, 0, 0.3);
     min-width: 38px;
   }
 
@@ -426,8 +396,8 @@
 
   .tap {
     padding: 4px 6px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.3);
+    border-radius: var(--radius);
+    background: var(--bg-inset);
     color: var(--text-secondary);
     font-size: 9px;
     font-weight: 700;
@@ -435,26 +405,6 @@
   }
 
   .tap:hover {
-    color: var(--tempo);
-  }
-
-  .chip {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    border-radius: 5px;
-    background: var(--bg-control);
-    color: var(--text-secondary);
-    font-size: 11px;
-  }
-
-  .chip:hover {
-    background: var(--bg-elevated);
-    color: var(--text-primary);
-  }
-
-  .chip.dirty {
     color: var(--tempo);
   }
 
@@ -468,7 +418,7 @@
   }
 
   .icon-btn.ai.active {
-    background: rgba(191, 90, 242, 0.16);
+    background: rgba(201, 160, 255, 0.16);
     color: var(--ai);
   }
 </style>

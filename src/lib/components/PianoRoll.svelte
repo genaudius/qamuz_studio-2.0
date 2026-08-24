@@ -33,14 +33,27 @@
       ? projectStore.findClip(projectStore.selectedClipIDs[0])
       : null
   );
-  const clip = $derived(found?.clip ?? null);
-  const track = $derived(found?.track ?? null);
-  const isMIDI = $derived(clip?.content.kind === 'midi');
+  const selectedTrack = $derived(
+    projectStore.project.tracks.find((item) => item.id === projectStore.selectedTrackID) ?? null
+  );
+  const midiTrack = $derived.by(() => {
+    const fromClip = found?.track;
+    if (fromClip && (fromClip.type === 'midi' || fromClip.type === 'instrument')) return fromClip;
+    if (selectedTrack && (selectedTrack.type === 'midi' || selectedTrack.type === 'instrument')) {
+      return selectedTrack;
+    }
+    return null;
+  });
+  const clip = $derived.by(() => {
+    if (found?.clip.content.kind === 'midi') return found.clip;
+    return midiTrack?.clips.find((item) => item.content.kind === 'midi') ?? null;
+  });
+  const track = $derived(found?.track ?? midiTrack);
 
   const bpm = $derived(projectStore.project.tempo.bpm);
   const perBar = $derived(beatsPerBar(transport.timeSignature));
   const clipStartBeat = $derived(clip ? toBeats(clip.timeRange.start, bpm) : 0);
-  const clipLengthBeats = $derived(clip ? toBeats(clip.timeRange.duration, bpm) : 4);
+  const clipLengthBeats = $derived(clip ? Math.max(16, toBeats(clip.timeRange.duration, bpm)) : 16);
 
   const pitches = $derived.by(() => {
     const list: number[] = [];
@@ -93,11 +106,11 @@
 
     for (const pitch of pitches) {
       const y = yForPitch(pitch);
-      ctx.fillStyle = isBlackKey(pitch) ? '#191a1d' : '#212226';
+      ctx.fillStyle = isBlackKey(pitch) ? '#131313' : '#1c1b1b';
       ctx.fillRect(0, y, gridWidth, NOTE_HEIGHT);
 
       if (pitch % 12 === 0) {
-        ctx.fillStyle = 'rgba(152, 152, 159, 0.28)';
+        ctx.fillStyle = 'rgba(62, 72, 80, 0.9)';
         ctx.fillRect(0, y + NOTE_HEIGHT - 1, gridWidth, 1);
       }
     }
@@ -115,10 +128,10 @@
       ctx.moveTo(x, 0);
       ctx.lineTo(x, gridHeight);
       ctx.strokeStyle = isBar
-        ? 'rgba(242, 242, 247, 0.35)'
+        ? 'rgba(229, 226, 225, 0.28)'
         : isBeat
-          ? 'rgba(152, 152, 159, 0.25)'
-          : 'rgba(152, 152, 159, 0.1)';
+          ? 'rgba(135, 146, 155, 0.25)'
+          : 'rgba(62, 72, 80, 0.45)';
       ctx.lineWidth = isBar ? 1 : 0.5;
       ctx.stroke();
     }
@@ -156,14 +169,22 @@
   }
 
   function onGridPointerDown(event: PointerEvent) {
-    if (!clip || !track || event.button !== 0) return;
+    if (event.button !== 0) return;
+
+    let owner = track;
+    let target = clip;
+    if (!target && midiTrack) {
+      target = projectStore.ensureMIDIClip(midiTrack.id, 0, Math.max(16, defaultDuration + 4));
+      owner = midiTrack;
+    }
+    if (!target || !owner) return;
 
     const point = localPoint(event, event.currentTarget as HTMLElement);
     const beat = Math.max(0, snap(point.x / pixelsPerBeat, event.altKey));
     const pitch = pitchForY(point.y);
 
-    projectStore.addNote(clip.id, beat, pitch, defaultDuration, velocity);
-    engine.auditionNote(track.id, pitch, 220);
+    projectStore.addNote(target.id, beat, pitch, defaultDuration, velocity);
+    engine.auditionNote(owner.id, pitch, 220);
   }
 
   type NoteDrag = {
@@ -233,6 +254,11 @@
     if (clip) projectStore.deleteNotes(clip.id, [id]);
   }
 
+  function createClip() {
+    if (!midiTrack) return;
+    projectStore.ensureMIDIClip(midiTrack.id, transport.playheadBeats, 4);
+  }
+
   function onKeyDown(event: KeyboardEvent) {
     if (!clip) return;
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
@@ -241,11 +267,14 @@
   }
 </script>
 
+<div class="piano">
 <div class="panel-title">
   <Icon name="pianoroll" size={12} />
   <span>Piano Roll</span>
   {#if clip}
     <span class="clip-label">{clip.name}</span>
+  {:else if midiTrack}
+    <span class="clip-label">{midiTrack.name}</span>
   {/if}
 
   <span class="spacer"></span>
@@ -266,6 +295,10 @@
     <input type="number" min="1" max="127" bind:value={velocity} class="vel" />
   </label>
 
+  {#if midiTrack && !clip}
+    <button class="create" onclick={createClip}>Crear clip MIDI</button>
+  {/if}
+
   <button class="icon-btn" title="Zoom out" onclick={() => (pixelsPerBeat = Math.max(16, pixelsPerBeat / 1.25))}>
     <Icon name="zoom-out" size={12} />
   </button>
@@ -274,10 +307,11 @@
   </button>
 </div>
 
-{#if !clip || !isMIDI}
-  <p class="empty">
-    {clip ? 'Selected clip has no MIDI' : 'Select a MIDI clip, or double click a MIDI lane'}
-  </p>
+{#if !midiTrack}
+  <div class="empty">
+    <p>Selecciona una pista MIDI o Instrument</p>
+    <span>El piano roll sigue la pista, como en el clon 1.0. Haz clic en Midi 1–4 o doble clic en un clip.</span>
+  </div>
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div class="roll" role="group" tabindex="-1" onkeydown={onKeyDown}>
@@ -331,8 +365,16 @@
     </div>
   </div>
 {/if}
+</div>
 
 <style>
+  .piano {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   .clip-label {
     color: var(--text-primary);
     font-weight: 500;
@@ -363,8 +405,29 @@
 
   .empty {
     margin: auto;
-    color: var(--text-tertiary);
+    max-width: 360px;
+    padding: 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .empty span {
     font-size: 11px;
+    color: var(--text-tertiary);
+    line-height: 1.45;
+  }
+
+  .create {
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .roll {
@@ -387,9 +450,9 @@
     justify-content: flex-end;
     width: 100%;
     padding-right: 3px;
-    background: #e8e8ec;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.35);
-    color: #1c1c1e;
+    background: #e5e2e1;
+    border-bottom: 1px solid rgba(19, 19, 19, 0.35);
+    color: #131313;
   }
 
   .key:hover {
@@ -397,7 +460,7 @@
   }
 
   .key.black {
-    background: #2a2a2e;
+    background: #201f1f;
     color: var(--text-tertiary);
   }
 
@@ -430,7 +493,7 @@
     position: absolute;
     border-radius: 2px;
     background: var(--accent);
-    border: 1px solid rgba(0, 0, 0, 0.5);
+    border: 1px solid color-mix(in srgb, var(--clip-color) 55%, black);
     cursor: grab;
   }
 

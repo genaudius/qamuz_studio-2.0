@@ -37,7 +37,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    ctx.fillStyle = '#1c1c1e';
+    ctx.fillStyle = '#2a2a2a';
     ctx.fillRect(0, 0, width, height);
 
     const totalBeats = Math.ceil(width / pixelsPerBeat) + 1;
@@ -50,13 +50,13 @@
       ctx.beginPath();
       ctx.moveTo(x, height - tickHeight);
       ctx.lineTo(x, height);
-      ctx.strokeStyle = isBar ? '#f2f2f7' : 'rgba(152, 152, 159, 0.5)';
+      ctx.strokeStyle = isBar ? '#e5e2e1' : 'rgba(135, 146, 155, 0.5)';
       ctx.lineWidth = isBar ? 1 : 0.5;
       ctx.stroke();
 
       if (isBar) {
-        ctx.fillStyle = '#98989f';
-        ctx.font = '500 10px ui-monospace, monospace';
+        ctx.fillStyle = '#87929b';
+        ctx.font = '500 10px "JetBrains Mono", ui-monospace, monospace';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(beat / perBar + 1), x + 4, 10);
       }
@@ -65,11 +65,11 @@
     if (transport.isLoopEnabled) {
       const start = transport.loopStartBeats * pixelsPerBeat;
       const end = transport.loopEndBeats * pixelsPerBeat;
-      ctx.fillStyle = 'rgba(10, 132, 255, 0.18)';
+      ctx.fillStyle = 'rgba(0, 174, 239, 0.18)';
       ctx.fillRect(start, 0, Math.max(1, end - start), 4);
     }
 
-    ctx.strokeStyle = '#38383c';
+    ctx.strokeStyle = '#3e4850';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, height - 0.5);
@@ -147,7 +147,7 @@
     top: 2px;
     padding: 0 4px;
     border-left: 2px solid var(--ai);
-    background: rgba(191, 90, 242, 0.2);
+    background: rgba(201, 160, 255, 0.2);
     color: var(--text-primary);
     font-size: 9px;
     line-height: 12px;

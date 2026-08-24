@@ -28,6 +28,7 @@
   }
 </script>
 
+<div class="mixer">
 <div class="panel-title">
   <Icon name="mixer" size={12} />
   <span>Mixer</span>
@@ -154,8 +155,16 @@
     </div>
   </div>
 </div>
+</div>
 
 <style>
+  .mixer {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   .count {
     margin-left: auto;
     font-size: 10px;
@@ -181,7 +190,7 @@
     width: 74px;
     flex: none;
     padding: 6px 4px;
-    border-radius: 5px;
+    border-radius: var(--radius-lg);
     background: var(--bg-control);
   }
 
@@ -190,7 +199,7 @@
   }
 
   .strip.master {
-    background: #2a2226;
+    background: var(--bg-highest);
   }
 
   .strip-color {
@@ -242,13 +251,13 @@
   }
 
   .toggle.on {
-    background: rgba(255, 152, 0, 0.24);
-    color: #ff9800;
+    background: rgba(255, 180, 170, 0.22);
+    color: var(--mute);
   }
 
   .toggle.solo.on {
-    background: rgba(255, 213, 79, 0.24);
-    color: #ffd54f;
+    background: rgba(114, 254, 136, 0.22);
+    color: var(--solo);
   }
 
   .master-tag {

@@ -6,18 +6,22 @@
   import Icon from './Icon.svelte';
   import { chatWithClaude } from '$lib/ai/claude';
   import { isClaudeConfigured, isElevenLabsConfigured, readAIConfig, saveAIConfig } from '$lib/ai/config';
+  import { executeDawAction, inferDawAction, planAndMaybeRender } from '$lib/ai/daw-actions';
   import { creditsLabel, getElevenLabsCredits, type ElevenLabsCredits } from '$lib/ai/elevenlabs';
   import { beatCountOfRange } from '$lib/ai/fill';
+  import { formatPlan, maestroHealth } from '$lib/ai/maestro';
   import type { ChatMessage } from '$lib/ai/types';
   import { newUUID } from '$lib/core/uuid';
+  import { onMount } from 'svelte';
   import { projectStore, transport } from '$lib/stores';
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state('');
   let busy = $state(false);
   let error = $state<string | null>(null);
-  let showSettings = $state(!isClaudeConfigured());
+  let showSettings = $state(false);
   let credits = $state<ElevenLabsCredits | null>(null);
+  let maestroOnline = $state(false);
 
   let supabaseUrl = $state(readAIConfig().supabaseUrl);
   let supabaseAnonKey = $state(readAIConfig().supabaseAnonKey);
@@ -37,42 +41,65 @@
     const tracks = projectStore.project.tracks
       .map((t) => `- ${t.name} (${t.type}, ${t.clips.length} clips)`)
       .join('\n');
-    return `You are the in-app assistant for Qamuz Studio, a DAW.
+    return `You are Maestro, the musical director inside Qamuz Studio.
 Tempo: ${transport.bpm} BPM
 Time signature: ${transport.timeSignature.numerator}/${transport.timeSignature.denominator}
 Tracks:
 ${tracks}
 
-Answer briefly. If the user wants music generated, tell them to drag a range on a track with Generative Fill on.`;
+You can tell the user to use Generative Fill, Mixer, Master, or ask GenAudius to render. Be brief.`;
   }
 
-  async function send() {
-    const text = draft.trim();
-    if (!text || busy) return;
+  function push(role: ChatMessage['role'], text: string) {
+    messages = [...messages, { id: newUUID(), role, text, createdAt: new Date().toISOString() }];
+  }
 
+  async function send(text = draft.trim(), render = false) {
+    if (!text || busy) return;
     draft = '';
-    messages = [
-      ...messages,
-      { id: newUUID(), role: 'user', text, createdAt: new Date().toISOString() }
-    ];
+    push('user', text);
     busy = true;
     error = null;
 
     try {
-      const history = messages
-        .filter((m) => m.role !== 'system')
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.text }));
-      const reply = await chatWithClaude(history, projectContext());
-      messages = [
-        ...messages,
-        { id: newUUID(), role: 'assistant', text: reply, createdAt: new Date().toISOString() }
-      ];
+      const command = inferDawAction(text);
+      if (command) {
+        const result = await executeDawAction(command.name, command.args);
+        push('assistant', result.message);
+        return;
+      }
+
+      const wantsRender = render || /\b(crear|create|render|genera(r)? la canci)/i.test(text);
+      try {
+        const { plan, message } = await planAndMaybeRender(text, wantsRender);
+        push('assistant', `${formatPlan(plan)}\n\n${message}`);
+        return;
+      } catch (maestroError) {
+        if (!isClaudeConfigured()) throw maestroError;
+        const history = messages
+          .filter((m) => m.role !== 'system')
+          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.text }));
+        const reply = await chatWithClaude(history, projectContext());
+        push('assistant', reply);
+      }
     } catch (err) {
       error = (err as Error).message;
     } finally {
       busy = false;
     }
   }
+
+  onMount(() => {
+    void maestroHealth().then((ok) => (maestroOnline = ok));
+    const seed = sessionStorage.getItem('qamuz.maestro.seed');
+    if (seed) {
+      sessionStorage.removeItem('qamuz.maestro.seed');
+      draft = seed;
+      const auto = sessionStorage.getItem('qamuz.maestro.autoPlan') === '1';
+      sessionStorage.removeItem('qamuz.maestro.autoPlan');
+      if (auto) void send(seed, false);
+    }
+  });
 
   async function saveSettings() {
     await saveAIConfig({
@@ -96,9 +123,11 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
   }
 </script>
 
+<div class="maestro">
 <div class="panel-title">
   <Icon name="sparkles" size={12} />
-  <span>AI</span>
+  <span>Maestro</span>
+  <span class="live" class:on={maestroOnline}>{maestroOnline ? 'GenAudius' : 'offline'}</span>
   {#if credits}
     <span class="credits">{creditsLabel(credits)} credits</span>
   {/if}
@@ -162,7 +191,7 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
 
   <div class="log">
     {#if messages.length === 0}
-      <p class="hint">Ask about the arrangement, or turn on Generative Fill and drag a range.</p>
+      <p class="hint">Soy Maestro. Dime la idea de la canción, o pide play, mixer, master, una pista nueva.</p>
     {/if}
     {#each messages as message (message.id)}
       <div class="bubble {message.role}">{message.text}</div>
@@ -185,16 +214,23 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
   >
     <input
       bind:value={draft}
-      placeholder="Ask the assistant…"
-      disabled={!isClaudeConfigured()}
+      placeholder="Idea, comando o “crear” para renderizar…"
     />
     <button class="icon-btn" type="submit" disabled={!draft.trim() || busy} title="Send">
       <Icon name="send" size={13} />
     </button>
   </form>
 </div>
+</div>
 
 <style>
+  .maestro {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+
   .body {
     display: flex;
     flex-direction: column;
@@ -213,7 +249,18 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
     color: var(--time);
     padding: 1px 6px;
     border-radius: 999px;
-    background: rgba(50, 215, 75, 0.12);
+    background: rgba(83, 225, 111, 0.12);
+  }
+
+  .live {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+
+  .live.on {
+    color: var(--time);
   }
 
   .fill-toggle {
@@ -228,7 +275,7 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
   }
 
   .fill-toggle.on {
-    background: rgba(191, 90, 242, 0.18);
+    background: rgba(201, 160, 255, 0.18);
     color: var(--ai);
     box-shadow: inset 0 0 0 1px var(--ai);
   }
@@ -236,7 +283,7 @@ Answer briefly. If the user wants music generated, tell them to drag a range on 
   .range-chip {
     padding: 6px 10px;
     border-radius: 6px;
-    background: rgba(191, 90, 242, 0.12);
+    background: rgba(201, 160, 255, 0.12);
     color: var(--ai);
     font-size: 11px;
     text-align: left;

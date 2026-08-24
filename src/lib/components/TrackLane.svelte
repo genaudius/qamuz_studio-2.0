@@ -9,7 +9,7 @@
   import { importAudioFile } from '$lib/audio/import';
   import { quantize } from '$lib/core/time';
   import type { Track } from '$lib/core/track';
-  import { projectStore } from '$lib/stores';
+  import { projectStore, workspace } from '$lib/stores';
 
   interface Props {
     track: Track;
@@ -109,7 +109,7 @@
     if (track.type !== 'midi' && track.type !== 'instrument') return;
     const beat = quantize(beatAt(event), 1, 'floor');
     projectStore.addEmptyMIDIClip(track.id, beat, 4);
-    projectStore.bottomPanel = 'pianoRoll';
+    workspace.open('pianoRoll');
   }
 </script>
 
@@ -150,7 +150,7 @@
 <style>
   .lane {
     position: relative;
-    border-bottom: 1px solid rgba(152, 152, 159, 0.12);
+    border-bottom: 1px solid var(--stroke);
     flex: none;
   }
 
@@ -159,7 +159,7 @@
   }
 
   .lane.drop-active {
-    background: rgba(10, 132, 255, 0.14);
+    background: var(--accent-dim);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
@@ -167,17 +167,17 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    background: rgba(191, 90, 242, 0.18);
+    background: rgba(201, 160, 255, 0.18);
     border-left: 1px solid var(--ai);
     border-right: 1px solid var(--ai);
     pointer-events: none;
   }
 
   .range.generating {
-    background: rgba(191, 90, 242, 0.32);
+    background: rgba(201, 160, 255, 0.32);
     box-shadow:
       inset 0 0 0 2px var(--ai),
-      0 0 18px rgba(191, 90, 242, 0.55);
+      0 0 18px rgba(201, 160, 255, 0.55);
     animation: fill-pulse 1.1s ease-in-out infinite;
   }
 

@@ -52,5 +52,7 @@ export async function initApp(): Promise<void> {
   void midiInput.enable();
 }
 
+export { workspace } from './workspace.svelte';
 export { ProjectStore, TransportStore };
 export type { BottomPanel, RangeSelection } from './project.svelte';
+export type { StudioModule } from './workspace.svelte';

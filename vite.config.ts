@@ -18,10 +18,18 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || true,
+    cors: true,
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
     watch: {
       ignored: ['**/src-tauri/**']
+    },
+    proxy: {
+      '/genaudius-api': {
+        target: 'http://127.0.0.1:42003',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/genaudius-api/, '') || '/'
+      }
     }
   },
 

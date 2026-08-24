@@ -45,12 +45,12 @@
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, height);
-      ctx.strokeStyle = isBar ? 'rgba(152, 152, 159, 0.4)' : 'rgba(152, 152, 159, 0.15)';
+      ctx.strokeStyle = isBar ? 'rgba(135, 146, 155, 0.4)' : 'rgba(62, 72, 80, 0.55)';
       ctx.lineWidth = isBar ? 1 : 0.5;
       ctx.stroke();
     }
 
-    ctx.strokeStyle = 'rgba(152, 152, 159, 0.3)';
+    ctx.strokeStyle = 'rgba(62, 72, 80, 0.85)';
     ctx.lineWidth = 1;
     for (const edge of rowEdges) {
       const y = Math.round(edge) - 0.5;
@@ -63,7 +63,7 @@
     if (transport.isLoopEnabled) {
       const start = transport.loopStartBeats * pixelsPerBeat;
       const end = transport.loopEndBeats * pixelsPerBeat;
-      ctx.fillStyle = 'rgba(10, 132, 255, 0.05)';
+      ctx.fillStyle = 'rgba(0, 174, 239, 0.06)';
       ctx.fillRect(start, 0, Math.max(1, end - start), height);
     }
   });
