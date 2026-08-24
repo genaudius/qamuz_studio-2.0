@@ -1,0 +1,203 @@
+/* Qamuz Studio design tokens.
+   Values mirror the macOS 1.0 build: dark chrome, accent-driven selection,
+   monospaced numeric readouts in the transport. */
+
+:root {
+  --bg-window: #1c1c1e;
+  --bg-control: #242427;
+  --bg-panel: #1f1f22;
+  --bg-elevated: #2c2c30;
+  --bg-inset: #131315;
+  --bg-readout: rgba(0, 0, 0, 0.45);
+
+  --text-primary: #f2f2f7;
+  --text-secondary: #98989f;
+  --text-tertiary: #6b6b72;
+
+  --stroke: #38383c;
+  --stroke-strong: #4a4a50;
+
+  --accent: #0a84ff;
+  --accent-dim: rgba(10, 132, 255, 0.14);
+  --accent-faint: rgba(10, 132, 255, 0.06);
+
+  --record: #ff453a;
+  --time: #32d74b;
+  --tempo: #ff9f0a;
+  --ai: #bf5af2;
+  --ai-alt: #64d2ff;
+  --warn: #ff9f0a;
+
+  --track-blue: #4a90d9;
+  --track-green: #4caf50;
+  --track-orange: #ff9800;
+  --track-yellow: #ffd54f;
+  --track-cyan: #26c6da;
+  --track-purple: #ab47bc;
+  --track-red: #ef5350;
+  --track-pink: #ec407a;
+  --track-teal: #26a69a;
+  --track-gray: #9e9e9e;
+
+  --ruler-height: 30px;
+  --track-height: 80px;
+  --track-header-width: 200px;
+  --radius: 6px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
+    system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-window);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+button:disabled {
+  opacity: 0.35;
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--stroke);
+  border-radius: 4px;
+  padding: 3px 6px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+/* Shared chrome primitives */
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.icon-btn.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.divider-v {
+  width: 1px;
+  height: 24px;
+  background: var(--stroke);
+  flex: none;
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 8px;
+  background: var(--bg-readout);
+  border-radius: 4px;
+}
+
+.readout-label {
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.readout-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--ruler-height);
+  padding: 0 8px;
+  background: var(--bg-window);
+  border-bottom: 1px solid var(--stroke);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+/* Scrollbars */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a4a50;
+  border-radius: 5px;
+  border: 2px solid var(--bg-window);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5c5c63;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
