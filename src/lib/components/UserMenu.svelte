@@ -44,13 +44,24 @@
     workspace.open(id);
     close();
   }
+
+  function onWindowKey(event: KeyboardEvent) {
+    if (!open) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onWindowKey} />
 
 <div class="user">
   <button
     class="chip"
     class:on={open}
     title="User+"
+    aria-haspopup="menu"
     aria-expanded={open}
     onclick={() => (open = !open)}
   >

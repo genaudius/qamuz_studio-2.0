@@ -30,10 +30,6 @@ export class WorkspaceStore {
     this.module = module;
   }
 
-  toggleMasterPlugin(): void {
-    this.module = this.module === 'mastering' ? 'arrange' : 'mastering';
-  }
-
   toggleSidebar(): void {
     if (this.sidebarHidden) {
       this.sidebarHidden = false;
