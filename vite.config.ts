@@ -20,6 +20,10 @@ export default defineConfig({
     strictPort: true,
     host: host || true,
     cors: true,
+    headers: {
+      'Content-Security-Policy':
+        "frame-ancestors 'self' http://localhost:5173 http://127.0.0.1:5173 http://localhost:4173"
+    },
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
     watch: {
       ignored: ['**/src-tauri/**']
@@ -36,6 +40,10 @@ export default defineConfig({
   // AudioWorklet processors are loaded at runtime by URL, so they must stay as
   // separate chunks with stable names instead of being inlined into the bundle.
   worker: { format: 'es' },
+
+  optimizeDeps: {
+    include: ['lamejs']
+  },
 
   build: {
     target: 'esnext',

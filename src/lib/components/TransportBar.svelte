@@ -6,27 +6,48 @@
    */
 
   import Icon from './Icon.svelte';
+  import RecentProjects from './RecentProjects.svelte';
   import MIDIMonitor from './MIDIMonitor.svelte';
   import UserMenu from './UserMenu.svelte';
   import { engine, projectStore, transport, workspace } from '$lib/stores';
   import { formatBarsBeats, formatClock } from '$lib/core/time';
-
-  interface Props {
-    onSaveProject: () => void;
-    onNewProject: () => void;
-  }
-
-  let { onSaveProject, onNewProject }: Props = $props();
+  import { persistDawSession } from '$lib/persistence/daw-db';
+  import { renameCurrentSession, sessionGate } from '$lib/persistence/sessions.svelte';
 
   let editingTempo = $state(false);
   let tempoText = $state('');
   let tempoInput = $state<HTMLInputElement | null>(null);
   let tapTimes: number[] = [];
+  let editingName = $state(false);
+  let nameText = $state('');
+  let nameInput = $state<HTMLInputElement | null>(null);
 
   // The readouts follow the smooth playhead, which is why they move at display
   // rate instead of jumping one audio buffer at a time.
   const bars = $derived(formatBarsBeats(transport.smoothPlayheadBeats, transport.timeSignature));
   const clock = $derived(formatClock((transport.smoothPlayheadBeats / transport.bpm) * 60));
+
+  function startNameEdit() {
+    nameText = projectStore.project.name;
+    editingName = true;
+    queueMicrotask(() => nameInput?.select());
+  }
+
+  function commitName() {
+    const next = nameText.trim();
+    editingName = false;
+    if (!next || next === projectStore.project.name) return;
+    projectStore.rename(next);
+    renameCurrentSession(next);
+    void persistDawSession();
+  }
+
+  function onNameKey(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitName();
+    } else if (event.key === 'Escape') editingName = false;
+  }
 
   function startTempoEdit() {
     tempoText = transport.bpm.toFixed(1);
@@ -92,6 +113,7 @@
   }
 
   async function togglePlay() {
+    if (sessionGate.visible) sessionGate.close();
     await engine.backend.resume();
     transport.togglePlayPause();
   }
@@ -263,10 +285,26 @@
   <div class="spacer"></div>
 
   <div class="group">
-    <span class="project-name">
-      {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
-    </span>
-    <UserMenu {onNewProject} {onSaveProject} />
+    <RecentProjects />
+    {#if editingName}
+      <input
+        bind:this={nameInput}
+        bind:value={nameText}
+        class="name-input"
+        aria-label="Nombre de la sesión"
+        onblur={commitName}
+        onkeydown={onNameKey}
+      />
+    {:else}
+      <button
+        class="project-name"
+        title="Doble clic para cambiar el título de la sesión"
+        ondblclick={startNameEdit}
+      >
+        {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
+      </button>
+    {/if}
+    <UserMenu />
   </div>
 </header>
 
@@ -278,10 +316,12 @@
     gap: 16px;
     padding: 8px 16px;
     min-height: 56px;
+    position: relative;
+    z-index: 20;
     background: var(--bg-highest);
     border-bottom: 1px solid var(--stroke);
     flex: none;
-    overflow-x: auto;
+    overflow: visible;
   }
 
   .group {
@@ -415,6 +455,24 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    background: transparent;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+
+  .project-name:hover {
+    color: var(--text-primary);
+    background: var(--bg-control);
+  }
+
+  .name-input {
+    width: 200px;
+    padding: 2px 6px;
+    font-size: 12px;
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
   }
 
   .icon-btn.ai.active {

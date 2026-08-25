@@ -17,6 +17,7 @@ export interface RecentProject {
 export interface AppSettings {
   recentProjects: RecentProject[];
   lastDirectory?: string;
+  lastSaveTarget?: 'system' | 'computer';
   /** Supabase project URL, e.g. https://abc.supabase.co */
   supabaseUrl?: string;
   supabaseAnonKey?: string;

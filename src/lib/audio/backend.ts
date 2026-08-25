@@ -113,6 +113,7 @@ export interface AudioBackend {
   /** Registers decoded audio so clips can reference it by file id. */
   registerAudioBuffer(fileID: string, buffer: AudioBuffer): void;
   hasAudioBuffer(fileID: string): boolean;
+  audioBuffer(fileID: string): AudioBuffer | undefined;
   scheduleAudioClip(fileID: string, clip: ScheduledAudioClip): void;
   clearAudioClips(): void;
 

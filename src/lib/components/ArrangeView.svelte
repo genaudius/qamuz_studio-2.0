@@ -15,41 +15,56 @@
   import TrackHeader from './TrackHeader.svelte';
   import TrackLane from './TrackLane.svelte';
   import { chooseAudioFiles, importAudioPath, isAudioPath } from '$lib/audio/import';
-  import { beatsPerBar, quantize } from '$lib/core/time';
+  import {
+    chooseSessionFiles,
+    chooseSessionFolder,
+    filesFromDataTransfer,
+    importSessionFiles,
+    importSessionPaths,
+    isSessionImportablePath
+  } from '$lib/audio/import-session';
+  import { lastContentBeats, openTimelineBeats, shouldGrowHorizon } from '$lib/core/timeline';
+  import { quantize } from '$lib/core/time';
   import { isTauri } from '$lib/persistence/tauri';
   import { projectStore, transport } from '$lib/stores';
+  import type { CreateTrackKind } from '$lib/stores/project.svelte';
 
   const RULER_HEIGHT = 30;
-  /** Empty bars kept past the last clip so there is always room to work. */
-  const TRAILING_BARS = 8;
 
   let lanesPane = $state<HTMLDivElement | null>(null);
   let headerPane = $state<HTMLDivElement | null>(null);
+  let horizonBeats = $state(0);
+  let scrollLeft = $state(0);
+  let viewWidth = $state(1400);
 
   let dragIndex = $state<number | null>(null);
   let dropIndex = $state<number | null>(null);
   let dropHint = $state(false);
   let importMessage = $state<string | null>(null);
+  let addMenuOpen = $state(false);
+
+  const NEW_TRACKS: { kind: CreateTrackKind; label: string; hint: string }[] = [
+    { kind: 'audio', label: 'Audio estéreo', hint: 'Pista de audio' },
+    { kind: 'midi', label: 'MIDI', hint: 'Notas y piano roll' },
+    { kind: 'instrument', label: 'Instrumento virtual', hint: 'Synth interno' },
+    { kind: 'aux', label: 'Auxiliar', hint: 'Retorno / envío' },
+    { kind: 'bus', label: 'Bus', hint: 'Grupo de mezcla' }
+  ];
 
   const tracks = $derived(projectStore.project.tracks);
   const trackOrder = $derived(tracks.map((t) => t.id));
   const pixelsPerBeat = $derived(projectStore.pixelsPerBeat);
-  const perBar = $derived(beatsPerBar(transport.timeSignature));
 
-  const contentBeats = $derived.by(() => {
-    let end = 0;
-    for (const track of tracks) {
-      for (const clip of track.clips) {
-        const start = clip.timeRange.start.samples;
-        const length = clip.timeRange.duration.samples;
-        const beats =
-          ((start + length) / projectStore.project.sampleRate / 60) * projectStore.project.tempo.bpm;
-        if (beats > end) end = beats;
-      }
-    }
-    const minimum = Math.max(end, transport.playheadBeats, transport.loopEndBeats);
-    return Math.ceil((minimum + TRAILING_BARS * perBar) / perBar) * perBar;
-  });
+  const contentBeats = $derived.by(() =>
+    openTimelineBeats({
+      contentEnd: lastContentBeats(projectStore.project),
+      playhead: transport.playheadBeats,
+      loopEnd: transport.loopEndBeats,
+      selectionEnd: projectStore.rangeSelection?.endBeat ?? 0,
+      horizon: horizonBeats,
+      timeSignature: transport.timeSignature
+    })
+  );
 
   const contentWidth = $derived(Math.max(1200, contentBeats * pixelsPerBeat));
   const stackHeight = $derived(tracks.reduce((sum, t) => sum + t.height, 0));
@@ -66,9 +81,65 @@
 
   const playheadX = $derived(transport.smoothPlayheadBeats * pixelsPerBeat);
 
+  function isFileDrag(event: DragEvent): boolean {
+    return [...(event.dataTransfer?.types ?? [])].includes('Files');
+  }
+
+  function onFileDragEnter(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    dropHint = true;
+  }
+
+  function onFileDragOver(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    dropHint = true;
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  }
+
+  function onFileDragLeave(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const inside =
+      event.clientX >= bounds.left &&
+      event.clientX <= bounds.right &&
+      event.clientY >= bounds.top &&
+      event.clientY <= bounds.bottom;
+    if (inside) return;
+    dropHint = false;
+  }
+
+  async function onFileDrop(event: DragEvent) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    dropHint = false;
+    if (!event.dataTransfer) return;
+
+    const files = await filesFromDataTransfer(event.dataTransfer);
+    if (!files.length) {
+      importMessage = 'No encontré WAV, MP3 o MIDI en lo que soltaste.';
+      return;
+    }
+
+    const report = await importSessionFiles(files);
+    importMessage = report.summary;
+  }
+
   function syncScroll() {
     if (headerPane && lanesPane) headerPane.scrollTop = lanesPane.scrollTop;
+    if (!lanesPane) return;
+    scrollLeft = lanesPane.scrollLeft;
+    viewWidth = lanesPane.clientWidth;
+    if (shouldGrowHorizon(scrollLeft, viewWidth, contentWidth)) {
+      horizonBeats = Math.max(horizonBeats, contentBeats);
+    }
   }
+
+  $effect(() => {
+    void projectStore.project.id;
+    horizonBeats = 0;
+  });
 
   // Keeps the playhead in view while the transport rolls, like the 1.0 build's
   // auto-scroll: it jumps a page ahead rather than scrolling continuously.
@@ -82,6 +153,7 @@
 
     if (x < left || x > left + visible - 80) {
       pane.scrollLeft = Math.max(0, x - visible * 0.15);
+      syncScroll();
     }
   });
 
@@ -91,7 +163,27 @@
    * have to be divided by the device pixel ratio to land on a lane.
    */
   onMount(() => {
-    if (!isTauri()) return;
+    const onImported = (event: Event) => {
+      const summary = (event as CustomEvent<{ summary?: string }>).detail?.summary;
+      if (summary) importMessage = summary;
+    };
+    window.addEventListener('qamuz:stems-imported', onImported);
+    const pane = lanesPane;
+    const resize = pane
+      ? new ResizeObserver(() => {
+          if (!lanesPane) return;
+          viewWidth = lanesPane.clientWidth;
+        })
+      : null;
+    if (pane && resize) resize.observe(pane);
+    syncScroll();
+
+    if (!isTauri()) {
+      return () => {
+        window.removeEventListener('qamuz:stems-imported', onImported);
+        resize?.disconnect();
+      };
+    }
 
     let unlisten: (() => void) | undefined;
 
@@ -113,8 +205,15 @@
           '[data-track-id]'
         );
         const trackID = lane?.dataset.trackId;
+        const paths = event.payload.paths.filter(isSessionImportablePath);
+        if (paths.length > 1 || (!trackID && paths.length > 0)) {
+          const report = await importSessionPaths(paths, 0);
+          importMessage = report.summary;
+          return;
+        }
+
         if (!lane || !trackID) {
-          importMessage = 'Drop audio onto a track lane';
+          importMessage = 'Suelta audio en un lane, o importa una carpeta para crear todas las pistas.';
           return;
         }
 
@@ -122,7 +221,7 @@
         let beat = Math.max(0, (x - rect.left) / pixelsPerBeat);
         if (projectStore.snapDivision > 0) beat = quantize(beat, projectStore.snapDivision, 'floor');
 
-        for (const path of event.payload.paths.filter(isAudioPath)) {
+        for (const path of paths.filter(isAudioPath)) {
           const result = await importAudioPath(path, trackID, beat);
           if (result.error) importMessage = result.error;
           if (!result.clipID) continue;
@@ -137,18 +236,40 @@
       });
     })();
 
-    return () => unlisten?.();
+    return () => {
+      window.removeEventListener('qamuz:stems-imported', onImported);
+      resize?.disconnect();
+      unlisten?.();
+    };
   });
 
   async function importIntoSelectedTrack() {
+    const selected = projectStore.selectedTrack;
     const trackID =
-      projectStore.selectedTrackID ??
-      projectStore.project.tracks.find((t) => t.type === 'audio')?.id;
-    if (!trackID) return;
+      selected?.type === 'audio'
+        ? selected.id
+        : projectStore.project.tracks.find((t) => t.type === 'audio')?.id ??
+          projectStore.addTrack('audio').id;
 
     const results = await chooseAudioFiles(trackID, transport.playheadBeats);
     const failure = results.find((r) => r.error);
     if (failure?.error) importMessage = failure.error;
+    else if (results.some((r) => r.clipID)) importMessage = 'Archivo importado a la pista. Pon el BPM si no coincide.';
+  }
+
+  async function importFolder() {
+    const report = await chooseSessionFolder();
+    if (report.summary !== 'Importación cancelada.') importMessage = report.summary;
+  }
+
+  async function importStems() {
+    const report = await chooseSessionFiles();
+    if (report.summary !== 'Importación cancelada.') importMessage = report.summary;
+  }
+
+  function createTrack(kind: CreateTrackKind) {
+    addMenuOpen = false;
+    projectStore.addTrackByKind(kind);
   }
 
   function onDragStart(index: number) {
@@ -192,7 +313,48 @@
   }
 </script>
 
-<section class="arrange">
+<section
+  class="arrange"
+  role="region"
+  aria-label="Arrange"
+  ondragenter={onFileDragEnter}
+  ondragover={onFileDragOver}
+  ondragleave={onFileDragLeave}
+  ondrop={(event) => void onFileDrop(event)}
+>
+  <div class="import-strip">
+    <button class="import-primary" title="Elige WAV, MP3 o MIDI — una pista por archivo" onclick={() => void importStems()}>
+      <Icon name="waveform" size={13} />
+      Importar stems
+    </button>
+    <button title="Importar una carpeta completa" onclick={() => void importFolder()}>
+      <Icon name="folder" size={13} />
+      Carpeta
+    </button>
+    <button title="Importar archivo a la pista seleccionada" onclick={() => void importIntoSelectedTrack()}>
+      <Icon name="waveform" size={13} />
+      Archivo a pista
+    </button>
+    <div class="new-track">
+      <button title="Crear pista" onclick={() => (addMenuOpen = !addMenuOpen)}>
+        <Icon name="plus" size={13} />
+        Nueva pista
+      </button>
+      {#if addMenuOpen}
+        <div class="add-menu strip-menu" role="menu">
+          {#each NEW_TRACKS as item (item.kind)}
+            <button onclick={() => createTrack(item.kind)} title={item.hint}>
+              <span>{item.label}</span>
+              <em>{item.hint}</em>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <p>Elige los WAV, o arrastra la carpeta — una pista por archivo</p>
+  </div>
+
+  <div class="arrange-body">
   <div class="header-column">
     <div class="corner" style:height="{RULER_HEIGHT}px">
       <button class="icon-btn" title="Zoom out" onclick={() => zoom(1 / 1.25)}>
@@ -200,9 +362,6 @@
       </button>
       <button class="icon-btn" title="Zoom in" onclick={() => zoom(1.25)}>
         <Icon name="zoom-in" size={13} />
-      </button>
-      <button class="icon-btn" title="Import audio" onclick={importIntoSelectedTrack}>
-        <Icon name="waveform" size={13} />
       </button>
       <span class="flex"></span>
       <select
@@ -234,12 +393,27 @@
       {/each}
 
       <div class="add-track">
-        <button onclick={() => projectStore.addTrack('midi')}>
-          <Icon name="plus" size={11} /> MIDI
+        <button
+          class="add-toggle"
+          class:open={addMenuOpen}
+          onclick={() => (addMenuOpen = !addMenuOpen)}
+        >
+          <Icon name="plus" size={11} />
+          Nueva pista
         </button>
-        <button onclick={() => projectStore.addTrack('audio')}>
-          <Icon name="plus" size={11} /> Audio
-        </button>
+        {#if addMenuOpen}
+          <div class="add-menu" role="menu">
+            {#each NEW_TRACKS as item (item.kind)}
+              <button
+                onclick={() => createTrack(item.kind)}
+                title={item.hint}
+              >
+                <span>{item.label}</span>
+                <em>{item.hint}</em>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -252,10 +426,10 @@
     role="presentation"
   >
     <div class="canvas" style:width="{contentWidth}px">
-      <TimelineRuler width={contentWidth} height={RULER_HEIGHT} />
+      <TimelineRuler width={contentWidth} height={RULER_HEIGHT} {scrollLeft} {viewWidth} />
 
       <div class="stack" style:height="{Math.max(stackHeight, 1)}px">
-        <LaneGrid width={contentWidth} height={Math.max(stackHeight, 1)} {rowEdges} />
+        <LaneGrid width={contentWidth} height={Math.max(stackHeight, 1)} {rowEdges} {scrollLeft} {viewWidth} />
 
         {#each tracks as track (track.id)}
           <TrackLane
@@ -272,24 +446,109 @@
       </div>
     </div>
 
-    {#if dropHint}
-      <div class="drop-hint">Drop audio on a track</div>
-    {/if}
-
     {#if importMessage}
       <button class="import-message" onclick={() => (importMessage = null)}>
         {importMessage}
       </button>
     {/if}
   </div>
+  </div>
+
+  {#if dropHint}
+    <div class="drop-veil">Suelta los stems aquí — una pista por archivo (Bajo, Requinto, Bongó…)</div>
+  {/if}
 </section>
 
 <style>
   .arrange {
     display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    position: relative;
+  }
+
+  .import-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--stroke);
+    background: var(--bg-panel);
+    flex: none;
+    min-height: 36px;
+    position: relative;
+    z-index: 6;
+    overflow: visible;
+  }
+
+  .import-strip > button,
+  .new-track > button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    background: var(--bg-control);
+    color: var(--text-primary);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .import-strip > button:hover,
+  .new-track > button:hover {
+    background: var(--bg-elevated);
+  }
+
+  .import-strip .import-primary {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+
+  .import-strip p {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .new-track {
+    position: relative;
+  }
+
+  .strip-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 20;
+    min-width: 200px;
+  }
+
+  .arrange-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .drop-veil {
+    position: absolute;
+    inset: 0;
+    z-index: 18;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 2px dashed var(--accent);
+    color: var(--accent);
+    font-size: 15px;
+    font-weight: 600;
+    text-align: center;
+    padding: 24px;
   }
 
   .header-column {
@@ -327,25 +586,61 @@
   }
 
   .add-track {
+    position: relative;
     display: flex;
+    flex-direction: column;
     gap: 4px;
     padding: 6px;
   }
 
-  .add-track button {
+  .add-toggle {
     display: flex;
     align-items: center;
-    gap: 3px;
-    padding: 4px 6px;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    padding: 6px 8px;
     border-radius: 4px;
     background: var(--bg-control);
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 11px;
   }
 
-  .add-track button:hover {
+  .add-toggle:hover,
+  .add-toggle.open {
     background: var(--bg-elevated);
     color: var(--text-primary);
+  }
+
+  .add-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 6px;
+    background: var(--bg-highest);
+    border: 1px solid var(--stroke);
+  }
+
+  .add-menu button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  .add-menu button:hover {
+    background: var(--bg-elevated);
+  }
+
+  .add-menu em {
+    font-style: normal;
+    font-size: 9px;
+    color: var(--text-tertiary);
   }
 
   .lanes {
@@ -373,7 +668,6 @@
     z-index: 4;
   }
 
-  .drop-hint,
   .import-message {
     position: fixed;
     bottom: 36px;
@@ -384,19 +678,10 @@
     background: var(--bg-elevated);
     border: 1px solid var(--stroke-strong);
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-    color: var(--text-primary);
+    color: var(--warn);
     font-size: 11px;
     z-index: 20;
-  }
-
-  .drop-hint {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .import-message {
     max-width: 60%;
-    color: var(--warn);
   }
 
   .playhead-flag {

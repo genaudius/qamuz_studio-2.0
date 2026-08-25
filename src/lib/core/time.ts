@@ -80,6 +80,13 @@ export function rangesOverlap(a: TimeRange, b: TimeRange): boolean {
   return a.start.samples < rangeEnd(b).samples && rangeEnd(a).samples > b.start.samples;
 }
 
+/** Convert a TimePosition into samples at another rate (engine vs file). */
+export function toSampleRate(position: TimePosition, sampleRate: number): number {
+  const sourceRate = position.sampleRate || sampleRate;
+  if (!sourceRate || sourceRate === sampleRate) return Math.round(position.samples);
+  return Math.round((position.samples / sourceRate) * sampleRate);
+}
+
 export function beatsPerBar(sig: TimeSignature): number {
   return sig.numerator;
 }
@@ -142,6 +149,14 @@ export function dbToLinear(db: number): number {
 export function formatDb(linear: number): string {
   const db = linearToDb(linear);
   return db === Number.NEGATIVE_INFINITY ? '-\u221E dB' : `${db.toFixed(1)} dB`;
+}
+
+/** Map a 0..1 linear peak onto a 0..1 meter throw (−48 dBFS silent, 0 dBFS full). */
+export function meterThrow(peak: number, floorDb = -48): number {
+  if (peak <= 0) return 0;
+  const db = linearToDb(peak);
+  if (db === Number.NEGATIVE_INFINITY) return 0;
+  return Math.max(0, Math.min(1, (db - floorDb) / -floorDb));
 }
 
 export function formatPan(pan: number): string {

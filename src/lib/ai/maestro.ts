@@ -36,6 +36,9 @@ export interface MaestroGenerateRequest {
 
 const LOCAL_DEFAULT = '/genaudius-api';
 
+/** Last successful GenAudius mix URL, so the session registry can restore it. */
+export let lastRenderAudioUrl: string | null = null;
+
 export function maestroBaseUrl(): string {
   const stored = (settings.maestroBaseUrl ?? '').replace(/\/+$/, '');
   if (stored) return stored;
@@ -53,7 +56,14 @@ async function maestroFetch(path: string, init?: RequestInit): Promise<Response>
     const auth = await fetch(`${base}/api/auth/auto`);
     if (auth.ok) {
       const body = (await auth.json()) as { token?: string };
-      if (body.token) headers.set('Authorization', `Bearer ${body.token}`);
+      if (body.token) {
+        headers.set('Authorization', `Bearer ${body.token}`);
+        try {
+          localStorage.setItem('trovamuz_token', body.token);
+        } catch {
+          // Browser storage can be blocked.
+        }
+      }
     }
   } catch {
     // Modal and some local builds have no /api/auth/auto.
@@ -79,20 +89,32 @@ export async function maestroHealth(): Promise<boolean> {
 }
 
 export async function interpretIdea(request: MaestroGenerateRequest): Promise<MaestroPreview> {
-  const response = await maestroFetch('/api/prompt/preview', {
-    method: 'POST',
-    body: JSON.stringify({
-      songDescription: request.songDescription,
-      genre: request.genre,
-      style: request.style,
-      title: request.title,
-      instrumental: request.instrumental ?? false,
-      duration: request.duration ?? 180,
-      bpm: request.bpm,
-      vocalType: request.vocalType ?? 'male'
-    })
-  });
+  let response: Response;
+  try {
+    response = await maestroFetch('/api/prompt/preview', {
+      method: 'POST',
+      body: JSON.stringify({
+        songDescription: request.songDescription,
+        genre: request.genre,
+        style: request.style,
+        title: request.title,
+        instrumental: request.instrumental ?? false,
+        duration: request.duration ?? 180,
+        bpm: request.bpm,
+        vocalType: request.vocalType ?? 'male'
+      })
+    });
+  } catch {
+    throw new AIServiceError(
+      'GenAudius no está en línea (puerto 42003). Mezclar la sesión del DAW no necesita el modelo: escribe “mezclar”.'
+    );
+  }
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw new AIServiceError(
+        'GenAudius no respondió. Si querías mezclar, escribe “mezclar”: el mixer del DAW mueve faders aquí, sin el modelo.'
+      );
+    }
     const detail = await response.text().catch(() => '');
     throw new AIServiceError(
       `Maestro no pudo interpretar la idea (${response.status}). ${detail.slice(0, 180)}`
@@ -143,7 +165,9 @@ async function pollGeneration(jobId: string): Promise<ArrayBuffer> {
     if (job.status === 'success') {
       const audioPath = job.result?.audioUrls?.[0];
       if (!audioPath) throw new AIServiceError('El render no devolvió audio');
-      const audio = await maestroFetch(audioPath.startsWith('/') ? audioPath : `/${audioPath}`);
+      const path = audioPath.startsWith('/') ? audioPath : `/${audioPath}`;
+      lastRenderAudioUrl = path.startsWith('http') ? path : `${maestroBaseUrl()}${path}`;
+      const audio = await maestroFetch(path);
       if (!audio.ok) throw new AIServiceError('No se pudo descargar el audio generado');
       return audio.arrayBuffer();
     }
@@ -179,18 +203,34 @@ async function generateOnModal(request: MaestroGenerateRequest): Promise<ArrayBu
   return bytes.buffer;
 }
 
+function formatValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => formatValue(item)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (typeof record.summary === 'string') return record.summary;
+    if (typeof record.text === 'string') return record.text;
+    if (typeof record.label === 'string') return record.label;
+    return Object.values(record).map((item) => formatValue(item)).filter(Boolean).join(' · ');
+  }
+  return '';
+}
+
 export function formatPlan(plan: MaestroPlan): string {
   const lines = [
-    plan.title ? `Título: ${plan.title}` : null,
-    plan.genre ? `Género: ${plan.genre}` : null,
-    plan.style ? `Estilo: ${plan.style}` : null,
-    plan.bpm ? `BPM: ${plan.bpm}` : null,
-    plan.key ? `Tonalidad: ${plan.key}` : null,
-    plan.structure ? `Estructura: ${plan.structure}` : null,
-    Array.isArray(plan.instruments) && plan.instruments.length
-      ? `Instrumentos: ${plan.instruments.join(', ')}`
-      : null,
-    plan.musicBrief ? `\n${plan.musicBrief}` : null
+    plan.title ? `Título: ${formatValue(plan.title)}` : null,
+    plan.genre ? `Género: ${formatValue(plan.genre)}` : null,
+    plan.style ? `Estilo: ${formatValue(plan.style)}` : null,
+    plan.bpm ? `BPM: ${formatValue(plan.bpm)}` : null,
+    plan.key ? `Tonalidad: ${formatValue(plan.key)}` : null,
+    plan.structure ? `Estructura: ${formatValue(plan.structure)}` : null,
+    plan.instruments ? `Instrumentos: ${formatValue(plan.instruments)}` : null,
+    plan.musicBrief ? `\n${formatValue(plan.musicBrief)}` : null
   ].filter(Boolean);
   return lines.join('\n') || 'Plan listo.';
 }

@@ -9,7 +9,7 @@
  */
 
 import { isNoteEvent } from '$lib/core/midi';
-import { fromBeats, toBeats } from '$lib/core/time';
+import { fromBeats, toBeats, toSampleRate } from '$lib/core/time';
 import type { Track } from '$lib/core/track';
 import type { ProjectStore } from '$lib/stores/project.svelte';
 import type { TransportStore } from '$lib/stores/transport.svelte';
@@ -211,12 +211,24 @@ export class EngineController {
           const fileID = audio.fileReference.fileID;
           if (!this.backend.hasAudioBuffer(fileID)) continue;
 
+          const buffer = this.backend.audioBuffer(fileID);
+          const engineRate = sampleRate;
+          const startSample = toSampleRate(clip.timeRange.start, engineRate);
+          const durationSamples = toSampleRate(clip.timeRange.duration, engineRate);
+          const fileRate = audio.fileReference.sampleRate || engineRate;
+          const offsetSample = Math.round(
+            (audio.sourceStartSample / Math.max(1, fileRate)) * engineRate
+          );
+          const sourceLength =
+            buffer?.length ??
+            Math.round((audio.sourceLengthSamples / Math.max(1, fileRate)) * engineRate);
+
           this.backend.scheduleAudioClip(fileID, {
             clipID: clip.id,
             trackID: track.id,
-            startSample: clip.timeRange.start.samples,
-            offsetSample: audio.sourceStartSample,
-            lengthSamples: Math.min(clip.timeRange.duration.samples, audio.sourceLengthSamples),
+            startSample,
+            offsetSample,
+            lengthSamples: Math.min(durationSamples, Math.max(0, sourceLength - offsetSample)),
             volume: clip.gain,
             fadeInSamples: clip.fadeInDuration,
             fadeOutSamples: clip.fadeOutDuration

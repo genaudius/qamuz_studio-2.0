@@ -10,6 +10,7 @@
   import PanKnob from './PanKnob.svelte';
   import { INSTRUMENTS, type InstrumentName } from '$lib/audio/backend';
   import { trackInstrument } from '$lib/audio/instruments';
+  import { trackLayoutLabel } from '$lib/audio/stems';
   import { toBeats } from '$lib/core/time';
   import { TRACK_COLORS, TRACK_COLOR_HEX, type InputSource } from '$lib/core/track';
   import { engine, projectStore } from '$lib/stores';
@@ -77,6 +78,11 @@
           onchange={(e) => projectStore.renameTrack(track.id, e.currentTarget.value)}
         />
       </label>
+
+      <div class="field">
+        <span class="field-label">Tipo</span>
+        <span class="mono">{trackLayoutLabel(track)}</span>
+      </div>
 
       <div class="field">
         <span class="field-label">Colour</span>

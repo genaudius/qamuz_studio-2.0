@@ -10,8 +10,9 @@
 
   import Icon from './Icon.svelte';
   import { isBlackKey, isNoteEvent, noteName } from '$lib/core/midi';
+  import { openTimelineBeats, shouldGrowHorizon } from '$lib/core/timeline';
   import { beatsPerBar, quantize, toBeats } from '$lib/core/time';
-  import { engine, projectStore, transport } from '$lib/stores';
+  import { engine, projectStore, transport, workspace } from '$lib/stores';
 
   const KEY_WIDTH = 44;
   const NOTE_HEIGHT = 12;
@@ -27,6 +28,9 @@
   let pixelsPerBeat = $state(60);
   let defaultDuration = $state(1);
   let velocity = $state(100);
+  let horizonBeats = $state(0);
+  let scrollLeft = $state(0);
+  let viewWidth = $state(800);
 
   const found = $derived(
     projectStore.selectedClipIDs.length > 0
@@ -53,16 +57,13 @@
   const bpm = $derived(projectStore.project.tempo.bpm);
   const perBar = $derived(beatsPerBar(transport.timeSignature));
   const clipStartBeat = $derived(clip ? toBeats(clip.timeRange.start, bpm) : 0);
-  const clipLengthBeats = $derived(clip ? Math.max(16, toBeats(clip.timeRange.duration, bpm)) : 16);
+  const clipLengthBeats = $derived(clip ? toBeats(clip.timeRange.duration, bpm) : 0);
 
   const pitches = $derived.by(() => {
     const list: number[] = [];
     for (let pitch = HIGH_PITCH; pitch >= LOW_PITCH; pitch -= 1) list.push(pitch);
     return list;
   });
-
-  const gridHeight = $derived(pitches.length * NOTE_HEIGHT);
-  const gridWidth = $derived(Math.max(400, clipLengthBeats * pixelsPerBeat));
 
   const notes = $derived.by(() => {
     if (!clip || clip.content.kind !== 'midi') return [];
@@ -75,10 +76,26 @@
     }));
   });
 
-  /** Playhead position inside the clip, or null when it is outside. */
+  const lastNoteEnd = $derived(notes.reduce((max, note) => Math.max(max, note.beat + note.duration), 0));
+  const localPlayhead = $derived(Math.max(0, transport.smoothPlayheadBeats - clipStartBeat));
+  const rollBeats = $derived(
+    openTimelineBeats({
+      contentEnd: Math.max(clipLengthBeats, lastNoteEnd),
+      playhead: localPlayhead,
+      horizon: horizonBeats,
+      timeSignature: transport.timeSignature
+    })
+  );
+
+  const gridHeight = $derived(pitches.length * NOTE_HEIGHT);
+  const gridWidth = $derived(Math.max(400, rollBeats * pixelsPerBeat));
+  const drawLeft = $derived(Math.max(0, scrollLeft - 200));
+  const drawWidth = $derived(Math.min(gridWidth - drawLeft, Math.max(viewWidth, 400) + 400));
+
+  /** Playhead position inside the roll. The grid has no end, so it stays visible. */
   const playheadX = $derived.by(() => {
     const local = transport.smoothPlayheadBeats - clipStartBeat;
-    if (local < 0 || local > clipLengthBeats) return null;
+    if (local < 0) return null;
     return local * pixelsPerBeat;
   });
 
@@ -95,32 +112,34 @@
     if (!element) return;
 
     const dpr = window.devicePixelRatio || 1;
-    element.width = Math.max(1, Math.round(gridWidth * dpr));
+    element.width = Math.max(1, Math.round(drawWidth * dpr));
     element.height = Math.max(1, Math.round(gridHeight * dpr));
 
     const ctx = element.getContext('2d');
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, gridWidth, gridHeight);
+    ctx.clearRect(0, 0, drawWidth, gridHeight);
 
     for (const pitch of pitches) {
       const y = yForPitch(pitch);
       ctx.fillStyle = isBlackKey(pitch) ? '#131313' : '#1c1b1b';
-      ctx.fillRect(0, y, gridWidth, NOTE_HEIGHT);
+      ctx.fillRect(0, y, drawWidth, NOTE_HEIGHT);
 
       if (pitch % 12 === 0) {
         ctx.fillStyle = 'rgba(62, 72, 80, 0.9)';
-        ctx.fillRect(0, y + NOTE_HEIGHT - 1, gridWidth, 1);
+        ctx.fillRect(0, y + NOTE_HEIGHT - 1, drawWidth, 1);
       }
     }
 
     const division = projectStore.snapDivision || 1;
-    const totalBeats = Math.ceil(gridWidth / pixelsPerBeat);
+    const startBeat = Math.floor(drawLeft / pixelsPerBeat);
+    const endBeat = Math.ceil((drawLeft + drawWidth) / pixelsPerBeat) + 1;
+    const stepStart = Math.floor(startBeat / division);
 
-    for (let step = 0; step * division <= totalBeats; step += 1) {
+    for (let step = stepStart; step * division <= endBeat; step += 1) {
       const beat = step * division;
-      const x = Math.round(beat * pixelsPerBeat) + 0.5;
+      const x = Math.round(beat * pixelsPerBeat - drawLeft) + 0.5;
       const isBar = Math.abs(beat % perBar) < 1e-6;
       const isBeat = Math.abs(beat % 1) < 1e-6;
 
@@ -149,13 +168,19 @@
   });
 
   $effect(() => {
-    // Reset the centering flag when the clip changes.
     void clip?.id;
     centered = false;
+    horizonBeats = 0;
   });
 
   function syncScroll() {
     if (keysPane && scroller) keysPane.scrollTop = scroller.scrollTop;
+    if (!scroller) return;
+    scrollLeft = scroller.scrollLeft;
+    viewWidth = scroller.clientWidth;
+    if (shouldGrowHorizon(scrollLeft, viewWidth, gridWidth)) {
+      horizonBeats = Math.max(horizonBeats, rollBeats);
+    }
   }
 
   function localPoint(event: PointerEvent | MouseEvent, element: HTMLElement) {
@@ -174,7 +199,7 @@
     let owner = track;
     let target = clip;
     if (!target && midiTrack) {
-      target = projectStore.ensureMIDIClip(midiTrack.id, 0, Math.max(16, defaultDuration + 4));
+      target = projectStore.ensureMIDIClip(midiTrack.id, 0, Math.max(64, defaultDuration + 4));
       owner = midiTrack;
     }
     if (!target || !owner) return;
@@ -259,6 +284,11 @@
     projectStore.ensureMIDIClip(midiTrack.id, transport.playheadBeats, 4);
   }
 
+  function closePanel() {
+    projectStore.bottomPanel = 'none';
+    if (workspace.module === 'mixer' || workspace.module === 'pianoRoll') workspace.open('arrange');
+  }
+
   function onKeyDown(event: KeyboardEvent) {
     if (!clip) return;
     if (event.key !== 'Delete' && event.key !== 'Backspace') return;
@@ -305,6 +335,9 @@
   <button class="icon-btn" title="Zoom in" onclick={() => (pixelsPerBeat = Math.min(400, pixelsPerBeat * 1.25))}>
     <Icon name="zoom-in" size={12} />
   </button>
+  <button class="panel-close" title="Cerrar piano roll" onclick={closePanel}>
+    <Icon name="close" size={13} />
+  </button>
 </div>
 
 {#if !midiTrack}
@@ -335,9 +368,14 @@
     </div>
 
     <div class="grid-scroll" bind:this={scroller} onscroll={syncScroll}>
-      <div class="grid-inner" style:width="{gridWidth}px" style:height="{gridHeight}px">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <canvas bind:this={grid} onpointerdown={onGridPointerDown}></canvas>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="grid-inner" style:width="{gridWidth}px" style:height="{gridHeight}px" onpointerdown={onGridPointerDown}>
+        <canvas
+          bind:this={grid}
+          style:left="{drawLeft}px"
+          style:width="{drawWidth}px"
+          style:height="{gridHeight}px"
+        ></canvas>
 
         {#each notes as note (note.id)}
           <div
@@ -484,9 +522,10 @@
   }
 
   canvas {
+    position: absolute;
+    top: 0;
     display: block;
-    width: 100%;
-    height: 100%;
+    pointer-events: none;
   }
 
   .note {

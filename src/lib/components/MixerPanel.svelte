@@ -8,8 +8,9 @@
   import Icon from './Icon.svelte';
   import PanKnob from './PanKnob.svelte';
   import { instrumentLabel, rackInstrumentSound, trackInstrument } from '$lib/audio/instruments';
+  import { trackLayoutLabel } from '$lib/audio/stems';
   import { TRACK_COLOR_HEX } from '$lib/core/track';
-  import { engine, projectStore } from '$lib/stores';
+  import { engine, projectStore, workspace } from '$lib/stores';
 
   const tracks = $derived(projectStore.project.tracks);
   const rack = $derived(projectStore.project.vRack.instruments);
@@ -26,6 +27,11 @@
       projectStore.project.masterTrack.volume = Math.max(0, Math.min(2, value));
     });
   }
+
+  function closePanel() {
+    projectStore.bottomPanel = 'none';
+    if (workspace.module === 'mixer' || workspace.module === 'pianoRoll') workspace.open('arrange');
+  }
 </script>
 
 <div class="mixer">
@@ -33,6 +39,9 @@
   <Icon name="mixer" size={12} />
   <span>Mixer</span>
   <span class="count">{tracks.length + rack.length} channels</span>
+  <button class="panel-close" title="Cerrar mixer" onclick={closePanel}>
+    <Icon name="close" size={13} />
+  </button>
 </div>
 
 <div class="strips">
@@ -51,7 +60,7 @@
       {#if track.type === 'midi' || track.type === 'instrument'}
         <span class="strip-sub">{instrumentLabel(trackInstrument(track))}</span>
       {:else}
-        <span class="strip-sub">{track.type}</span>
+        <span class="strip-sub">{trackLayoutLabel(track)}</span>
       {/if}
 
       <PanKnob

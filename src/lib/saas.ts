@@ -1,15 +1,20 @@
 /**
  * Way back to the QAMUZ AI SaaS from Studio.
  *
- * Desktop opens https://qamuz.ai/ in the system browser. When Studio is
- * embedded in the SaaS iframe (the same pattern as 1.0), Home navigates the
- * parent to `/`.
+ * In Vite/Tauri dev, Home opens the local SaaS at http://localhost:5173/.
+ * Production builds open https://qamuz.ai/. When Studio is embedded in the
+ * SaaS iframe (the same pattern as 1.0), Home navigates the parent to `/`.
  */
 
 import { isTauri } from '$lib/persistence/tauri';
 import { projectStore } from '$lib/stores';
 
 export const QAMUZ_SAAS_HOME = 'https://qamuz.ai/';
+export const QAMUZ_SAAS_DEV_HOME = 'http://localhost:5173/';
+
+function defaultSaasHome(): string {
+  return import.meta.env.DEV ? QAMUZ_SAAS_DEV_HOME : QAMUZ_SAAS_HOME;
+}
 
 export function isEmbedded(): boolean {
   if (typeof window === 'undefined') return false;
@@ -35,7 +40,7 @@ function isTrustedSaasOrigin(origin: string): boolean {
 
 function tryTrustedUrl(value: string): string | null {
   try {
-    const url = new URL(value, typeof window === 'undefined' ? QAMUZ_SAAS_HOME : window.location.origin);
+    const url = new URL(value, typeof window === 'undefined' ? defaultSaasHome() : window.location.origin);
     if (!isTrustedSaasOrigin(url.origin)) return null;
     return url.pathname && url.pathname !== '/' ? url.href : `${url.origin}/`;
   } catch {
@@ -43,9 +48,9 @@ function tryTrustedUrl(value: string): string | null {
   }
 }
 
-/** Home URL: query/env override, then the embedding origin, then qamuz.ai. */
+/** Home URL: query/env override, then the embedding origin, then local SaaS in dev. */
 export function saasHomeUrl(): string {
-  if (typeof window === 'undefined') return QAMUZ_SAAS_HOME;
+  if (typeof window === 'undefined') return defaultSaasHome();
 
   const params = new URLSearchParams(window.location.search);
   const fromQuery = params.get('home') ?? params.get('returnUrl');
@@ -67,7 +72,7 @@ export function saasHomeUrl(): string {
       const parentOrigin = window.parent.location.origin;
       if (isTrustedSaasOrigin(parentOrigin)) return `${parentOrigin}/`;
     } catch {
-      // Cross-origin parent: fall through to the referrer, then qamuz.ai.
+      // Cross-origin parent: fall through to the referrer, then the default.
     }
 
     try {
@@ -80,7 +85,7 @@ export function saasHomeUrl(): string {
     }
   }
 
-  return QAMUZ_SAAS_HOME;
+  return defaultSaasHome();
 }
 
 /** Leave Studio and open the QAMUZ AI home. */
@@ -123,6 +128,19 @@ export function saasPathUrl(path: string): string {
   const home = saasHomeUrl().replace(/\/$/, '');
   const clean = path.replace(/^\//, '');
   return `${home}/${clean}`;
+}
+
+/** Sign out of QAMUZ AI. Inside the iframe the parent runs the real auth client. */
+export async function signOutOfSaas(): Promise<void> {
+  if (isEmbedded()) {
+    try {
+      window.parent.postMessage({ type: 'qamuz-studio:sign-out' }, '*');
+    } catch {
+      // Parent may be cross-origin.
+    }
+    return;
+  }
+  await goToSaasPath('login');
 }
 
 /** Open a SaaS route such as /pricing from Studio. */

@@ -7,6 +7,7 @@
 
   import ClipView from './ClipView.svelte';
   import { importAudioFile } from '$lib/audio/import';
+  import { filesFromDataTransfer, importSessionFiles } from '$lib/audio/import-session';
   import { quantize } from '$lib/core/time';
   import type { Track } from '$lib/core/track';
   import { projectStore, workspace } from '$lib/stores';
@@ -29,7 +30,10 @@
   );
 
   let anchorBeat = 0;
+  let anchorX = 0;
+  let pressing = false;
   let dragging = false;
+  const DRAG_THRESHOLD = 5;
 
   function beatAt(event: PointerEvent | MouseEvent): number {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -43,19 +47,28 @@
 
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     projectStore.selectTrack(track.id);
-    projectStore.clearClipSelection();
+    if (event.target === event.currentTarget) {
+      projectStore.clearClipSelection();
+      if (projectStore.rangeSelection?.trackID !== track.id) {
+        projectStore.setRangeSelection(null);
+      }
+    }
 
     anchorBeat = beatAt(event);
-    dragging = true;
-    projectStore.setRangeSelection(null);
+    anchorX = event.clientX;
+    pressing = true;
+    dragging = false;
   }
 
   function onPointerMove(event: PointerEvent) {
-    if (!dragging) return;
+    if (!pressing) return;
+
+    if (!dragging) {
+      if (Math.abs(event.clientX - anchorX) < DRAG_THRESHOLD) return;
+      dragging = true;
+    }
 
     const beat = beatAt(event);
-    if (Math.abs(beat - anchorBeat) < 0.001) return;
-
     projectStore.setRangeSelection({
       trackID: track.id,
       startBeat: Math.min(anchorBeat, beat),
@@ -65,11 +78,14 @@
 
   function onPointerUp(event: PointerEvent) {
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    const didDrag = dragging;
+    pressing = false;
     dragging = false;
 
     const range = projectStore.rangeSelection;
     if (
       projectStore.aiFillMode &&
+      didDrag &&
       range &&
       range.trackID === track.id &&
       range.endBeat - range.startBeat >= 0.25
@@ -81,10 +97,17 @@
   /** HTML file drop, the path used when running in a browser tab. */
   async function onDrop(event: DragEvent) {
     event.preventDefault();
+    event.stopPropagation();
     dropActive = false;
 
-    const files = [...(event.dataTransfer?.files ?? [])];
+    const files = event.dataTransfer ? await filesFromDataTransfer(event.dataTransfer) : [];
     if (files.length === 0) return;
+
+    if (files.length > 1) {
+      const report = await importSessionFiles(files);
+      onImportMessage?.(report.summary);
+      return;
+    }
 
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     let beat = Math.max(0, (event.clientX - rect.left) / pixelsPerBeat);
@@ -117,6 +140,7 @@
   class="lane"
   class:selected={isSelected}
   class:drop-active={dropActive}
+  class:fill-mode={projectStore.aiFillMode}
   style:height="{track.height}px"
   style:width="{width}px"
   data-track-id={track.id}
@@ -128,6 +152,7 @@
   ondblclick={onDoubleClick}
   ondragover={(e) => {
     e.preventDefault();
+    e.stopPropagation();
     dropActive = true;
   }}
   ondragleave={() => (dropActive = false)}
@@ -154,6 +179,10 @@
     flex: none;
   }
 
+  .lane.fill-mode {
+    cursor: crosshair;
+  }
+
   .lane.selected {
     background: var(--accent-faint);
   }
@@ -167,6 +196,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
+    z-index: 3;
     background: rgba(201, 160, 255, 0.18);
     border-left: 1px solid var(--ai);
     border-right: 1px solid var(--ai);

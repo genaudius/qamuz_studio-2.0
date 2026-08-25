@@ -4,6 +4,7 @@
   import { formatDb } from '$lib/core/time';
   import { documentStatus } from '$lib/persistence/documents.svelte';
   import { engine, projectStore, transport } from '$lib/stores';
+  import { studioHelp } from '$lib/stores/help.svelte';
 
   interface Props {
     booting: boolean;
@@ -52,6 +53,10 @@
 
   <span class="spacer"></span>
 
+  <button class="help" type="button" title="Ayuda del DAW (F1)" onclick={() => studioHelp.toggle()}>
+    Ayuda · F1
+  </button>
+
   <span class="text dim">Master</span>
   <div class="master-meter" title="Master output">
     <span class="fill" style:width="{Math.min(1, masterPeak) * 100}%"></span>
@@ -95,6 +100,19 @@
 
   .spacer {
     flex: 1;
+  }
+
+  .help {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 650;
+  }
+
+  .help:hover {
+    color: var(--ai);
   }
 
   .dot {

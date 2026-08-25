@@ -32,6 +32,7 @@ pub fn run() {
             project_fs::write_project_package,
             project_fs::import_audio_into_package,
             project_fs::write_audio_into_package,
+            project_fs::write_session_file,
             project_fs::read_audio_file,
             project_fs::read_settings,
             project_fs::write_settings,

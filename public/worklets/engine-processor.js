@@ -581,8 +581,8 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.clickVoices = remaining;
   }
 
-  /** Mixes any audio clips overlapping this block into the track buffers. */
-  #renderClips(track, mono, blockStart, blockEnd, blockSize) {
+  /** Mixes overlapping audio clips into the track's stereo buffers. Stereo files keep L/R. */
+  #renderClips(track, leftBuf, rightBuf, blockStart, blockEnd, blockSize) {
     if (track.clips.length === 0) return;
 
     for (const clip of track.clips) {
@@ -594,17 +594,13 @@ class EngineProcessor extends AudioWorkletProcessor {
 
       const from = Math.max(blockStart, clip.startSample);
       const to = Math.min(blockEnd, clipEnd);
+      const srcL = buffer.channels[0];
+      const srcR = buffer.channels.length > 1 ? buffer.channels[1] : srcL;
 
       for (let position = from; position < to; position += 1) {
         const clipOffset = position - clip.startSample;
         const sourceIndex = clip.offsetSample + clipOffset;
-        if (sourceIndex < 0 || sourceIndex >= buffer.length) continue;
-
-        let value = 0;
-        for (let c = 0; c < buffer.channels.length; c += 1) {
-          value += buffer.channels[c][sourceIndex];
-        }
-        value /= buffer.channels.length;
+        if (!srcL || sourceIndex < 0 || sourceIndex >= buffer.length) continue;
 
         let gain = clip.volume;
         if (clip.fadeInSamples > 0 && clipOffset < clip.fadeInSamples) {
@@ -616,7 +612,10 @@ class EngineProcessor extends AudioWorkletProcessor {
         }
 
         const index = position - blockStart;
-        if (index >= 0 && index < blockSize) mono[index] += value * gain;
+        if (index >= 0 && index < blockSize) {
+          leftBuf[index] += srcL[sourceIndex] * gain;
+          rightBuf[index] += srcR[sourceIndex] * gain;
+        }
       }
     }
   }
@@ -646,23 +645,27 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.#scheduleClicks(blockStart, blockEnd);
     }
 
-    const mono = new Float32Array(blockSize);
+    const mixL = new Float32Array(blockSize);
+    const mixR = new Float32Array(blockSize);
 
     for (const track of this.tracks.values()) {
-      mono.fill(0);
+      mixL.fill(0);
+      mixR.fill(0);
 
       let anyVoice = false;
       for (const voice of track.voices) {
         if (!voice.active) continue;
         anyVoice = true;
         for (let i = 0; i < blockSize; i += 1) {
-          mono[i] += voice.render(sampleRate, track.bendRatio);
+          const value = voice.render(sampleRate, track.bendRatio);
+          mixL[i] += value;
+          mixR[i] += value;
         }
       }
 
       const hadClips = track.clips.length > 0;
       if (this.playing && hadClips) {
-        this.#renderClips(track, mono, blockStart, blockEnd, blockSize);
+        this.#renderClips(track, mixL, mixR, blockStart, blockEnd, blockSize);
       }
 
       if (!anyVoice && !hadClips) {
@@ -672,20 +675,22 @@ class EngineProcessor extends AudioWorkletProcessor {
       }
 
       const gain = track.muted ? 0 : track.volume;
-      // Constant-power pan, so sweeping does not change perceived loudness.
-      const angle = ((track.pan + 1) / 2) * (Math.PI / 2);
-      const gainLeft = Math.cos(angle) * gain;
-      const gainRight = Math.sin(angle) * gain;
+      // Stereo balance: a stereo file keeps L/R; pan only attenuates one side.
+      const panL = track.pan <= 0 ? 1 : 1 - track.pan;
+      const panR = track.pan >= 0 ? 1 : 1 + track.pan;
+      const gainLeft = gain * panL;
+      const gainRight = gain * panR;
 
       let peak = 0;
       let sum = 0;
 
       for (let i = 0; i < blockSize; i += 1) {
-        const value = mono[i];
-        left[i] += value * gainLeft;
-        if (right !== left) right[i] += value * gainRight;
+        const l = mixL[i] * gainLeft;
+        const r = mixR[i] * gainRight;
+        left[i] += l;
+        if (right !== left) right[i] += r;
 
-        const magnitude = Math.abs(value * gain);
+        const magnitude = Math.max(Math.abs(l), Math.abs(r));
         if (magnitude > peak) peak = magnitude;
         sum += magnitude * magnitude;
       }

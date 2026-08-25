@@ -22,6 +22,7 @@ import {
   type MarkerType,
   type Project
 } from '$lib/core/project';
+import { lastContentBeats } from '$lib/core/timeline';
 import {
   GRID_DIVISIONS,
   fromBeats,
@@ -42,6 +43,9 @@ import { newUUID } from '$lib/core/uuid';
 import { UndoStack } from './undo.svelte';
 
 export type BottomPanel = 'none' | 'mixer' | 'pianoRoll';
+
+/** Track kinds the arrange + menu can create. Aux/bus share engine type `bus`. */
+export type CreateTrackKind = 'audio' | 'midi' | 'instrument' | 'aux' | 'bus';
 
 /** A beat range on one track, used by Generative Fill and range edits. */
 export interface RangeSelection {
@@ -264,6 +268,41 @@ export class ProjectStore {
     if (owner) this.selectedTrackID = owner.id;
   }
 
+  /** Click a clip so Maestro knows which track/region to add or change. */
+  selectClipForMaestro(clipID: string): void {
+    this.selectClip(clipID);
+    const found = this.findClip(clipID);
+    if (!found) return;
+    const bpm = this.project.tempo.bpm;
+    const startBeat = toBeats(found.clip.timeRange.start, bpm);
+    const endBeat = startBeat + Math.max(0.25, toBeats(found.clip.timeRange.duration, bpm));
+    this.rangeSelection = { trackID: found.track.id, startBeat, endBeat };
+  }
+
+  /** If the user selected a clip or track but has not dragged a range yet. */
+  ensureRangeForMaestro(): RangeSelection | null {
+    if (this.rangeSelection) return this.rangeSelection;
+    const clipID = this.selectedClipIDs[0];
+    if (clipID) {
+      this.selectClipForMaestro(clipID);
+      return this.rangeSelection;
+    }
+    const track = this.selectedTrack;
+    if (!track?.clips.length) return null;
+    const bpm = this.project.tempo.bpm;
+    let startBeat = Number.POSITIVE_INFINITY;
+    let endBeat = 0;
+    for (const clip of track.clips) {
+      const start = toBeats(clip.timeRange.start, bpm);
+      const end = start + toBeats(clip.timeRange.duration, bpm);
+      startBeat = Math.min(startBeat, start);
+      endBeat = Math.max(endBeat, end);
+    }
+    if (!(startBeat < endBeat)) return null;
+    this.rangeSelection = { trackID: track.id, startBeat, endBeat };
+    return this.rangeSelection;
+  }
+
   clearClipSelection(): void {
     this.selectedClipIDs = [];
   }
@@ -276,14 +315,25 @@ export class ProjectStore {
     this.rangeSelection = selection;
   }
 
+  /** Marks 0 → last clip so Export can bounce the whole song. */
+  selectToSongEnd(): RangeSelection | null {
+    const track =
+      this.selectedTrack ?? this.project.tracks.find((item) => item.clips.length > 0) ?? this.project.tracks[0];
+    if (!track) return null;
+    const endBeat = Math.max(lastContentBeats(this.project), 1);
+    this.rangeSelection = { trackID: track.id, startBeat: 0, endBeat };
+    this.selectedTrackID = track.id;
+    return this.rangeSelection;
+  }
+
   // --- tracks ---
 
-  addTrack(type: TrackType = 'midi'): Track {
+  addTrack(type: TrackType = 'midi', name?: string): Track {
     const index = this.project.tracks.length;
-    const label = type === 'audio' ? 'Audio' : type === 'bus' ? 'Bus' : 'Midi';
+    const label = type === 'audio' ? 'Audio' : type === 'bus' ? 'Bus' : type === 'instrument' ? 'Instrumento' : 'Midi';
     const sameType = this.project.tracks.filter((t) => t.type === type).length + 1;
     const track = makeTrack(
-      `${label} ${sameType}`,
+      name?.trim() || `${label} ${sameType}`,
       type,
       NEW_TRACK_COLORS[index % NEW_TRACK_COLORS.length]
     );
@@ -296,6 +346,18 @@ export class ProjectStore {
     });
     this.selectedTrackID = track.id;
     return track;
+  }
+
+  addTrackByKind(kind: CreateTrackKind): Track {
+    if (kind === 'aux' || kind === 'bus') {
+      const prefix = kind === 'aux' ? 'Aux' : 'Bus';
+      const count =
+        this.project.tracks.filter(
+          (track) => track.type === 'bus' && new RegExp(`^${prefix}\\b`, 'i').test(track.name)
+        ).length + 1;
+      return this.addTrack('bus', `${prefix} ${count}`);
+    }
+    return this.addTrack(kind);
   }
 
   deleteTrack(id: string): void {
@@ -349,6 +411,17 @@ export class ProjectStore {
     this.mutate('Change Pan', () =>
       this.#withTrack(id, (t) => (t.pan = Math.max(-1, Math.min(1, pan))))
     );
+  }
+
+  applyMixMoves(moves: Array<{ id: string; volume: number; pan: number }>): void {
+    this.mutate('Maestro Mix', () => {
+      for (const move of moves) {
+        this.#withTrack(move.id, (track) => {
+          track.volume = Math.max(0, Math.min(2, move.volume));
+          track.pan = Math.max(-1, Math.min(1, move.pan));
+        });
+      }
+    });
   }
 
   toggleTrackMute(id: string): void {
@@ -674,7 +747,17 @@ export class ProjectStore {
 
   addNote(clipID: string, beat: number, pitch: number, duration = 1, velocity = 100): void {
     const event = makeNoteEvent(Math.max(0, beat), pitch, velocity, duration);
-    this.mutate('Add Note', () => this.#withMIDIEvents(clipID, (events) => events.push(event)));
+    this.mutate('Add Note', () =>
+      this.#withClip(clipID, (clip) => {
+        if (clip.content.kind !== 'midi') return;
+        clip.content.midi.events.push(event);
+        const need = Math.max(0, beat) + Math.max(1 / 32, duration) + 4;
+        const length = toBeats(clip.timeRange.duration, this.project.tempo.bpm);
+        if (need > length) {
+          clip.timeRange.duration = fromBeats(need, this.project.tempo.bpm, this.project.sampleRate);
+        }
+      })
+    );
     this.selectedNoteIDs = [event.id];
   }
 

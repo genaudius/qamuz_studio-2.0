@@ -13,33 +13,38 @@
     height: number;
     /** Cumulative y offsets where each track lane ends. */
     rowEdges: number[];
+    scrollLeft?: number;
+    viewWidth?: number;
   }
 
-  let { width, height, rowEdges }: Props = $props();
+  let { width, height, rowEdges, scrollLeft = 0, viewWidth = 1400 }: Props = $props();
 
   let canvas = $state<HTMLCanvasElement | null>(null);
 
   const pixelsPerBeat = $derived(projectStore.pixelsPerBeat);
   const perBar = $derived(beatsPerBar(transport.timeSignature));
+  const drawLeft = $derived(Math.max(0, scrollLeft - 200));
+  const drawWidth = $derived(Math.min(width - drawLeft, Math.max(viewWidth, 400) + 400));
 
   $effect(() => {
     const element = canvas;
     if (!element) return;
 
     const dpr = window.devicePixelRatio || 1;
-    element.width = Math.max(1, Math.round(width * dpr));
+    element.width = Math.max(1, Math.round(drawWidth * dpr));
     element.height = Math.max(1, Math.round(height * dpr));
 
     const ctx = element.getContext('2d');
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, drawWidth, height);
 
-    const totalBeats = Math.ceil(width / pixelsPerBeat) + 1;
+    const startBeat = Math.floor(drawLeft / pixelsPerBeat);
+    const endBeat = Math.ceil((drawLeft + drawWidth) / pixelsPerBeat) + 1;
 
-    for (let beat = 0; beat < totalBeats; beat += 1) {
-      const x = Math.round(beat * pixelsPerBeat) + 0.5;
+    for (let beat = startBeat; beat < endBeat; beat += 1) {
+      const x = Math.round(beat * pixelsPerBeat - drawLeft) + 0.5;
       const isBar = beat % perBar === 0;
 
       ctx.beginPath();
@@ -56,25 +61,30 @@
       const y = Math.round(edge) - 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
+      ctx.lineTo(drawWidth, y);
       ctx.stroke();
     }
 
     if (transport.isLoopEnabled) {
-      const start = transport.loopStartBeats * pixelsPerBeat;
-      const end = transport.loopEndBeats * pixelsPerBeat;
+      const start = transport.loopStartBeats * pixelsPerBeat - drawLeft;
+      const end = transport.loopEndBeats * pixelsPerBeat - drawLeft;
       ctx.fillStyle = 'rgba(0, 174, 239, 0.06)';
       ctx.fillRect(start, 0, Math.max(1, end - start), height);
     }
   });
 </script>
 
-<canvas bind:this={canvas} style:width="{width}px" style:height="{height}px"></canvas>
+<canvas
+  bind:this={canvas}
+  style:width="{drawWidth}px"
+  style:height="{height}px"
+  style:left="{drawLeft}px"
+></canvas>
 
 <style>
   canvas {
     position: absolute;
-    inset: 0;
+    top: 0;
     pointer-events: none;
   }
 </style>

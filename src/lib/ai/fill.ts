@@ -3,12 +3,33 @@
  */
 
 import { importAudioBytes } from '$lib/audio/import';
+import type { InstrumentName } from '$lib/audio/backend';
 import { isNoteEvent } from '$lib/core/midi';
 import { toBeats } from '$lib/core/time';
 import { engine, projectStore, transport } from '$lib/stores';
 import { editMIDI, generateMIDI } from './claude';
+import { isClaudeConfigured } from './config';
 import { generateAIAudio } from './elevenlabs';
-import type { AIAudioModel, GeneratedMIDINote, TrackNoteContext } from './types';
+import { localPartForSound } from './local-midi';
+import type { AIAudioModel, GeneratedMIDINote, MIDIGenerationResult, TrackNoteContext } from './types';
+
+function soundFromPrompt(prompt: string): InstrumentName {
+  const t = prompt.toLowerCase();
+  if (/(bajo|bass)/.test(t)) return 'bass';
+  if (/(bater|drum)/.test(t)) return 'drums';
+  if (/piano/.test(t)) return 'piano';
+  if (/(pad|cuerda|string)/.test(t)) return 'pad';
+  if (/(guitar|requinto|pluck)/.test(t)) return 'pluck';
+  if (/(lead|synth|metal)/.test(t)) return 'lead';
+  return 'bass';
+}
+
+function localMidiResult(prompt: string, beats: number, beatsPerBar: number): MIDIGenerationResult {
+  return {
+    notes: localPartForSound(soundFromPrompt(prompt), beats, beatsPerBar),
+    suggestedName: prompt.slice(0, 20) || 'MIDI'
+  };
+}
 
 export function beatCountOfRange(): number {
   const range = projectStore.rangeSelection;
@@ -90,23 +111,31 @@ export async function runMIDIFill(prompt: string): Promise<void> {
 
   projectStore.isAIGenerating = true;
   try {
-    const result =
-      current.length > 0
-        ? await editMIDI({
-            prompt,
-            currentNotes: current,
-            beatCount: beats,
-            tempo,
-            timeSignature,
-            otherTracks
-          })
-        : await generateMIDI({
-            prompt,
-            beatCount: beats,
-            tempo,
-            timeSignature,
-            otherTracks
-          });
+    let result: MIDIGenerationResult;
+    try {
+      if (isClaudeConfigured() && current.length > 0) {
+        result = await editMIDI({
+          prompt,
+          currentNotes: current,
+          beatCount: beats,
+          tempo,
+          timeSignature,
+          otherTracks
+        });
+      } else if (isClaudeConfigured()) {
+        result = await generateMIDI({
+          prompt,
+          beatCount: beats,
+          tempo,
+          timeSignature,
+          otherTracks
+        });
+      } else {
+        result = localMidiResult(prompt, beats, timeSignature.numerator || 4);
+      }
+    } catch {
+      result = localMidiResult(prompt, beats, timeSignature.numerator || 4);
+    }
 
     projectStore.insertGeneratedMIDI(
       range.trackID,

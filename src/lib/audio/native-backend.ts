@@ -175,6 +175,10 @@ export class NativeAudioBackend implements AudioBackend {
     return this.inner.hasAudioBuffer(fileID);
   }
 
+  audioBuffer(fileID: string): AudioBuffer | undefined {
+    return this.inner.audioBuffer(fileID);
+  }
+
   scheduleAudioClip(fileID: string, clip: ScheduledAudioClip): void {
     this.inner.scheduleAudioClip(fileID, clip);
   }

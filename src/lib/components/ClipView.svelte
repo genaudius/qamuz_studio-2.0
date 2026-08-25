@@ -5,7 +5,13 @@
    * on a canvas, MIDI clips draw a note preview.
    */
 
-  import { peaksFor, resamplePeaks } from '$lib/audio/waveform';
+  import {
+    peaksFor,
+    resamplePeaks,
+    subscribeWaveformCache,
+    waveformCacheGeneration,
+    waveformColumns
+  } from '$lib/audio/waveform';
   import { isNoteEvent } from '$lib/core/midi';
   import { quantize, toBeats } from '$lib/core/time';
   import { TRACK_COLOR_HEX, type Track } from '$lib/core/track';
@@ -25,6 +31,13 @@
   const RESIZE_ZONE = 8;
 
   let canvas = $state<HTMLCanvasElement | null>(null);
+  let peaksTick = $state(waveformCacheGeneration());
+
+  $effect(() => {
+    return subscribeWaveformCache(() => {
+      peaksTick = waveformCacheGeneration();
+    });
+  });
 
   const bpm = $derived(projectStore.project.tempo.bpm);
   const pixelsPerBeat = $derived(projectStore.pixelsPerBeat);
@@ -57,29 +70,32 @@
   $effect(() => {
     const element = canvas;
     if (!element || clip.content.kind !== 'audio') return;
+    const generation = peaksTick;
+    void generation;
 
     const audio = clip.content.audio;
     const peaks = peaksFor(audio.fileReference.fileID);
-    const drawWidth = Math.max(1, Math.floor(width));
-    const drawHeight = Math.max(1, Math.floor(bodyHeight));
+    const drawHeight = Math.max(8, Math.floor(bodyHeight));
+    const columns = waveformColumns(width);
 
-    const dpr = window.devicePixelRatio || 1;
-    element.width = Math.round(drawWidth * dpr);
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    element.width = Math.round(columns * dpr);
     element.height = Math.round(drawHeight * dpr);
 
     const ctx = element.getContext('2d');
     if (!ctx) return;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, drawWidth, drawHeight);
+    ctx.clearRect(0, 0, columns, drawHeight);
 
     if (!peaks) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.fillRect(0, drawHeight / 2 - 0.5, drawWidth, 1);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.fillRect(0, 0, columns, drawHeight);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.fillRect(0, drawHeight / 2 - 0.5, columns, 1);
       return;
     }
 
-    const columns = drawWidth;
     const resampled = resamplePeaks(
       peaks,
       audio.fileReference.lengthInSamples,
@@ -89,7 +105,7 @@
     );
 
     const mid = drawHeight / 2;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
 
     for (let column = 0; column < columns; column += 1) {
       const min = resampled[column * 2];
@@ -99,11 +115,22 @@
       ctx.fillRect(column, top, 1, Math.max(1, bottom - top));
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.fillRect(0, mid - 0.5, drawWidth, 1);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.fillRect(0, mid - 0.5, columns, 1);
   });
 
+  const DRAG_THRESHOLD = 5;
+
   type DragMode = 'move' | 'resize';
+
+  let pending: {
+    mode: DragMode;
+    pointerX: number;
+    pointerY: number;
+    startBeat: number;
+    lengthBeats: number;
+    laneIndex: number;
+  } | null = null;
 
   let drag: {
     mode: DragMode;
@@ -116,16 +143,17 @@
 
   function onPointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
+    if (projectStore.aiFillMode) return;
 
     const element = event.currentTarget as HTMLElement;
     const rect = element.getBoundingClientRect();
     const mode: DragMode = event.clientX > rect.right - RESIZE_ZONE ? 'resize' : 'move';
 
+    event.stopPropagation();
     element.setPointerCapture(event.pointerId);
-    projectStore.selectClip(clip.id, event.shiftKey || event.metaKey || event.ctrlKey);
-    projectStore.beginInteraction(mode === 'move' ? 'Move Clip' : 'Resize Clip');
+    projectStore.selectClipForMaestro(clip.id);
 
-    drag = {
+    pending = {
       mode,
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -136,6 +164,16 @@
   }
 
   function onPointerMove(event: PointerEvent) {
+    if (projectStore.aiFillMode) return;
+
+    if (!drag && pending) {
+      const distance = Math.hypot(event.clientX - pending.pointerX, event.clientY - pending.pointerY);
+      if (distance < DRAG_THRESHOLD) return;
+      projectStore.beginInteraction(pending.mode === 'move' ? 'Move Clip' : 'Resize Clip');
+      drag = pending;
+      pending = null;
+    }
+
     if (!drag) return;
 
     const deltaBeats = (event.clientX - drag.pointerX) / pixelsPerBeat;
@@ -162,8 +200,9 @@
   }
 
   function onPointerUp(event: PointerEvent) {
-    if (!drag) return;
+    pending = null;
     (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    if (!drag) return;
     drag = null;
     projectStore.endInteraction();
   }
@@ -181,6 +220,7 @@
   class="clip"
   class:selected={isSelected}
   class:muted={clip.isMuted}
+  class:fill-pass={projectStore.aiFillMode}
   style:left="{startBeat * pixelsPerBeat}px"
   style:width="{width}px"
   style:height="{laneHeight - 4}px"
@@ -203,7 +243,7 @@
 
   <div class="clip-body" style:height="{bodyHeight}px">
     {#if clip.content.kind === 'audio'}
-      <canvas bind:this={canvas} style:width="{width}px" style:height="{bodyHeight}px"></canvas>
+      <canvas bind:this={canvas}></canvas>
     {:else if clip.content.kind === 'midi'}
       {#each notes as note, i (i)}
         <span
@@ -231,6 +271,10 @@
     background: color-mix(in srgb, var(--clip-color) 45%, #131313);
     overflow: hidden;
     cursor: grab;
+  }
+
+  .clip.fill-pass {
+    pointer-events: none;
   }
 
   .clip.selected {
@@ -273,7 +317,9 @@
 
   canvas {
     display: block;
-    opacity: 0.9;
+    width: 100%;
+    height: 100%;
+    opacity: 0.95;
   }
 
   .note {

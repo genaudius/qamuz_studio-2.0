@@ -196,6 +196,23 @@ select:focus {
   flex: none;
 }
 
+.panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  flex: none;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+}
+
+.panel-close:hover {
+  background: var(--bg-control);
+  color: var(--text-primary);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

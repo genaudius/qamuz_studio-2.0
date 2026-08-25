@@ -8,6 +8,8 @@
   import Icon from './Icon.svelte';
   import MiniMeter from './MiniMeter.svelte';
   import { instrumentLabel, trackInstrument } from '$lib/audio/instruments';
+  import { trackLayoutLabel } from '$lib/audio/stems';
+  import { formatDb } from '$lib/core/time';
   import { TRACK_COLOR_HEX, type Track } from '$lib/core/track';
   import { engine, projectStore } from '$lib/stores';
 
@@ -25,10 +27,12 @@
 
   let editingName = $state(false);
   let nameDraft = $state('');
+  let menu = $state<{ x: number; y: number } | null>(null);
 
   const isSelected = $derived(projectStore.selectedTrackID === track.id);
   const isMIDI = $derived(track.type === 'midi' || track.type === 'instrument');
   const level = $derived(engine.meters[track.id]?.peak ?? 0);
+  const typeLabel = $derived(trackLayoutLabel(track));
 
   const outputLabel = $derived.by(() => {
     if (track.midiOutput?.kind !== 'rackInstrument') return 'Track';
@@ -50,7 +54,30 @@
     if (name && name !== track.name) projectStore.renameTrack(track.id, name);
     editingName = false;
   }
+
+  function openMenu(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    projectStore.selectTrack(track.id);
+    menu = { x: event.clientX, y: event.clientY };
+  }
+
+  function duplicate() {
+    menu = null;
+    projectStore.duplicateTrack(track.id);
+  }
+
+  function remove() {
+    menu = null;
+    projectStore.deleteTrack(track.id);
+  }
 </script>
+
+<svelte:window
+  onclick={() => {
+    if (menu) menu = null;
+  }}
+/>
 
 <div
   class="header"
@@ -62,6 +89,7 @@
   draggable="true"
   onclick={() => projectStore.selectTrack(track.id)}
   onkeydown={(e) => e.key === 'Enter' && projectStore.selectTrack(track.id)}
+  oncontextmenu={openMenu}
   ondragstart={() => onDragStart(index)}
   ondragover={(e) => {
     e.preventDefault();
@@ -69,6 +97,8 @@
   }}
   ondrop={(e) => {
     e.preventDefault();
+    if ([...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+    e.stopPropagation();
     onDrop();
   }}
 >
@@ -98,13 +128,25 @@
             class="name"
             role="button"
             tabindex="0"
-            title="Double click to rename"
+            title="Doble clic para renombrar"
             ondblclick={startRename}
             onkeydown={(e) => e.key === 'F2' && startRename()}
           >
             {track.name}
           </span>
         {/if}
+        <span class="flex"></span>
+        <button
+          class="ctl"
+          title="Borrar pista"
+          aria-label="Borrar pista"
+          onclick={(e) => {
+            e.stopPropagation();
+            remove();
+          }}
+        >
+          <Icon name="trash" size={11} />
+        </button>
       </div>
 
       <div class="row">
@@ -122,11 +164,11 @@
               ? 'V-Rack Sum'
               : track.inputSource?.kind === 'audioDevice'
                 ? `Input ${track.inputSource.channelIndex + 1}`
-                : 'No Input'}
+                : typeLabel}
           </span>
         {:else}
           <Icon name="mixer" size={10} />
-          <span class="type">{track.type}</span>
+          <span class="pill">{typeLabel}</span>
         {/if}
       </div>
 
@@ -165,11 +207,32 @@
           S
         </button>
         <span class="flex"></span>
-        <MiniMeter {level} variant={track.isArmed ? 'input' : 'output'} />
+        <div class="meter-block" title="Pico">
+          <MiniMeter {level} variant={track.isArmed ? 'input' : 'output'} />
+          <span class="peak-db">{formatDb(level)}</span>
+        </div>
       </div>
     </div>
   </div>
 </div>
+
+{#if menu}
+  <div class="menu" style:left="{menu.x}px" style:top="{menu.y}px" role="menu">
+    <button
+      onclick={(e) => {
+        e.stopPropagation();
+        duplicate();
+      }}>Duplicar pista</button
+    >
+    <button
+      class="danger"
+      onclick={(e) => {
+        e.stopPropagation();
+        remove();
+      }}>Borrar pista</button
+    >
+  </div>
+{/if}
 
 <style>
   .header {
@@ -229,6 +292,7 @@
 
   .name-row {
     height: 15px;
+    gap: 4px;
   }
 
   .name {
@@ -239,6 +303,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: text;
+    min-width: 0;
   }
 
   .name-input {
@@ -273,9 +338,49 @@
     max-width: 70px;
   }
 
-  .type {
-    font-size: 10px;
-    text-transform: capitalize;
+  .meter-block {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    flex: none;
+  }
+
+  .peak-db {
+    font-family: var(--font-mono);
+    font-size: 8px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    min-width: 42px;
+    text-align: right;
+  }
+
+  .menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 140px;
+    padding: 4px;
+    border-radius: 6px;
+    background: var(--bg-highest);
+    border: 1px solid var(--stroke);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+
+  .menu button:hover {
+    background: var(--bg-elevated);
+  }
+
+  .menu button.danger {
+    color: var(--mute);
   }
 
   .dot {

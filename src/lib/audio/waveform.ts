@@ -13,7 +13,36 @@ export type PeakData = Float32Array;
 /** Peaks per second of audio in the cache. Fine enough to zoom in a long way. */
 const CACHE_RESOLUTION = 400;
 
+/**
+ * Cap waveform bitmap columns. A 3–5 min stem at zoom can be tens of thousands
+ * of CSS pixels; Chrome blanks canvases past ~32767, which is why imported
+ * clips played but showed no waveform. Stretch a short bitmap instead, like
+ * AudioWaveformView.swift (~500 columns).
+ */
+export const MAX_WAVEFORM_COLUMNS = 1024;
+
 const cache = new Map<string, PeakData>();
+let cacheGeneration = 0;
+const cacheListeners = new Set<() => void>();
+
+export function waveformColumns(cssWidth: number): number {
+  return Math.min(MAX_WAVEFORM_COLUMNS, Math.max(2, Math.floor(cssWidth)));
+}
+
+/** ClipView subscribes so a late cachePeaks() retriggers the canvas. */
+export function subscribeWaveformCache(listener: () => void): () => void {
+  cacheListeners.add(listener);
+  return () => cacheListeners.delete(listener);
+}
+
+export function waveformCacheGeneration(): number {
+  return cacheGeneration;
+}
+
+function bumpCache(): void {
+  cacheGeneration += 1;
+  for (const listener of cacheListeners) listener();
+}
 
 /** Mono mixdown min/max pairs at the cache resolution. */
 export function computePeaks(buffer: AudioBuffer, resolution = CACHE_RESOLUTION): PeakData {
@@ -56,6 +85,7 @@ export function cachePeaks(fileID: string, buffer: AudioBuffer): PeakData {
 
   const peaks = computePeaks(buffer);
   cache.set(fileID, peaks);
+  bumpCache();
   return peaks;
 }
 
@@ -64,7 +94,8 @@ export function peaksFor(fileID: string): PeakData | undefined {
 }
 
 export function forgetPeaks(fileID: string): void {
-  cache.delete(fileID);
+  if (!cache.delete(fileID)) return;
+  bumpCache();
 }
 
 /**

@@ -151,6 +151,35 @@ export function encodeWav(buffer: AudioBuffer): Uint8Array {
   return new Uint8Array(out);
 }
 
+/** Place an already-decoded buffer on a track (stem extraction). */
+export async function importDecodedBuffer(
+  buffer: AudioBuffer,
+  trackID: string,
+  startBeat: number,
+  name: string
+): Promise<ImportResult> {
+  try {
+    const reference = referenceFor(`${name}.wav`, name, buffer);
+    const clipID = await place(reference, buffer, trackID, startBeat);
+    const packagePath = projectStore.packagePath;
+    if (packagePath && clipID) {
+      try {
+        const wav = encodeWav(buffer);
+        const relative = await writeAudioIntoPackage(packagePath, `${reference.fileID}.wav`, wav);
+        projectStore.setAudioFileRelativePath(reference.fileID, relative);
+      } catch (error) {
+        return {
+          clipID,
+          error: `Imported, but not copied into the project: ${(error as Error).message}`
+        };
+      }
+    }
+    return { clipID };
+  } catch (error) {
+    return { clipID: null, error: (error as Error).message };
+  }
+}
+
 /** Place generated (or recorded) audio bytes on a track. */
 export async function importAudioBytes(
   bytes: ArrayBuffer,
@@ -187,6 +216,46 @@ export async function importAudioBytes(
   }
 }
 
+function audioUrlCandidates(audioUrl: string): string[] {
+  const trimmed = audioUrl.trim();
+  if (!trimmed) return [];
+  const candidates = [trimmed];
+  if (trimmed.startsWith('/')) {
+    candidates.push(`/genaudius-api${trimmed}`);
+    candidates.push(`http://127.0.0.1:42003${trimmed}`);
+  }
+  return [...new Set(candidates)];
+}
+
+/** Fetch a generated mix by URL (1.0 session restore) and place it on a track. */
+export async function importAudioFromUrl(
+  audioUrl: string,
+  name: string,
+  trackID?: string
+): Promise<ImportResult> {
+  let lastError = 'No se pudo descargar el audio';
+  for (const candidate of audioUrlCandidates(audioUrl)) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}`;
+        continue;
+      }
+      const bytes = await response.arrayBuffer();
+      let track = trackID
+        ? projectStore.project.tracks.find((item) => item.id === trackID)
+        : projectStore.project.tracks.find((item) => item.type === 'audio');
+      if (!track) track = projectStore.addTrack('audio');
+      const placed = await importAudioBytes(bytes, track.id, 0, name);
+      if (placed.clipID) return placed;
+      lastError = placed.error ?? lastError;
+    } catch (error) {
+      lastError = (error as Error).message;
+    }
+  }
+  return { clipID: null, error: lastError };
+}
+
 /** Import from a dropped or picked `File`, the browser case. */
 export async function importAudioFile(
   file: File,
@@ -207,13 +276,28 @@ export async function importAudioFile(
 /** Opens a file picker and imports the selection. */
 export async function chooseAudioFiles(trackID: string, startBeat: number): Promise<ImportResult[]> {
   if (!isTauri()) {
-    return [{ clipID: null, error: 'Use drag and drop in the browser build' }];
+    const files = await pickBrowserAudioFiles();
+    const results: ImportResult[] = [];
+    let beat = startBeat;
+    for (const file of files) {
+      const result = await importAudioFile(file, trackID, beat);
+      results.push(result);
+      if (result.clipID) {
+        const found = projectStore.findClip(result.clipID);
+        if (found) {
+          const bpm = projectStore.project.tempo.bpm;
+          beat +=
+            (found.clip.timeRange.duration.samples / projectStore.project.sampleRate / 60) * bpm;
+        }
+      }
+    }
+    return results;
   }
 
   const { open } = await import('@tauri-apps/plugin-dialog');
   const selected = await open({
     multiple: true,
-    title: 'Import audio',
+    title: 'Importar audio',
     filters: [{ name: 'Audio', extensions: AUDIO_EXTENSIONS }]
   });
 
@@ -227,7 +311,6 @@ export async function chooseAudioFiles(trackID: string, startBeat: number): Prom
     const result = await importAudioPath(path, trackID, beat);
     results.push(result);
 
-    // Lay multiple files end to end rather than stacking them.
     if (result.clipID) {
       const found = projectStore.findClip(result.clipID);
       if (found) {
@@ -239,4 +322,17 @@ export async function chooseAudioFiles(trackID: string, startBeat: number): Prom
   }
 
   return results;
+}
+
+function pickBrowserAudioFiles(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = AUDIO_EXTENSIONS.map((ext) => `.${ext}`).join(',');
+    const finish = (files: File[]) => resolve(files);
+    input.addEventListener('cancel', () => finish([]));
+    input.onchange = () => finish(input.files ? [...input.files] : []);
+    input.click();
+  });
 }

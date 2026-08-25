@@ -2,7 +2,7 @@
  * QAMUZ MASTER PRO processing: bounce, measure, style, EQ, dynamics, loudness.
  */
 
-import { toBeats } from '$lib/core/time';
+import { lastContentBeats } from '$lib/core/timeline';
 import type { Project } from '$lib/core/project';
 import { engine, projectStore, transport } from '$lib/stores';
 
@@ -58,14 +58,18 @@ export const DEFAULT_RECIPE: MasterRecipe = {
 };
 
 export function projectEndBeats(project: Project = projectStore.project): number {
-  const bpm = project.tempo.bpm;
-  let end = 16;
-  for (const track of project.tracks) {
-    for (const clip of track.clips) {
-      end = Math.max(end, toBeats(clip.timeRange.start, bpm) + toBeats(clip.timeRange.duration, bpm));
-    }
+  return Math.max(lastContentBeats(project), 8);
+}
+
+export type BounceRange = { startBeat: number; endBeat: number };
+
+export function bounceRangeFromSelection(project: Project = projectStore.project): BounceRange {
+  const songEnd = projectEndBeats(project);
+  const range = projectStore.rangeSelection;
+  if (range && range.endBeat - range.startBeat >= 0.25) {
+    return { startBeat: Math.max(0, range.startBeat), endBeat: range.endBeat };
   }
-  return Math.max(end, 8);
+  return { startBeat: 0, endBeat: songEnd };
 }
 
 export function measureLoudness(buffer: AudioBuffer): LoudnessReport {
@@ -226,11 +230,13 @@ export function applyMastering(source: AudioBuffer, recipe: MasterRecipe): Audio
   return out;
 }
 
-export async function bounceMix(): Promise<AudioBuffer> {
-  const endBeat = projectEndBeats();
+export async function bounceMix(range?: BounceRange): Promise<AudioBuffer> {
+  const span = range ?? { startBeat: 0, endBeat: projectEndBeats() };
   const sampleRate = engine.backend.sampleRate;
-  const endSample = Math.round((endBeat / transport.bpm) * 60 * sampleRate);
-  return await engine.backend.bounceOffline(0, Math.max(sampleRate, endSample));
+  const bpm = Math.max(1, transport.bpm);
+  const startSample = Math.round((Math.max(0, span.startBeat) / bpm) * 60 * sampleRate);
+  const endSample = Math.round((Math.max(span.startBeat + 0.25, span.endBeat) / bpm) * 60 * sampleRate);
+  return await engine.backend.bounceOffline(startSample, Math.max(startSample + Math.round(sampleRate * 0.05), endSample));
 }
 
 export function downloadWav(bytes: Uint8Array, filename: string): void {

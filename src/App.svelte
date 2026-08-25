@@ -10,26 +10,46 @@
   import ArrangeView from '$lib/components/ArrangeView.svelte';
   import ExportPanel from '$lib/components/ExportPanel.svelte';
   import GenerateDialog from '$lib/components/GenerateDialog.svelte';
+  import HelpOverlay from '$lib/components/HelpOverlay.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Inspector from '$lib/components/Inspector.svelte';
   import MasteringPanel from '$lib/components/MasteringPanel.svelte';
   import MixerPanel from '$lib/components/MixerPanel.svelte';
   import PianoRoll from '$lib/components/PianoRoll.svelte';
   import Resizer from '$lib/components/Resizer.svelte';
+  import SaveDialog from '$lib/components/SaveDialog.svelte';
+  import SessionGate from '$lib/components/SessionGate.svelte';
   import SettingsPanel from '$lib/components/SettingsPanel.svelte';
   import StatusBar from '$lib/components/StatusBar.svelte';
   import TransportBar from '$lib/components/TransportBar.svelte';
-  import VRackPanel from '$lib/components/VRackPanel.svelte';
+  import WorkOverlay from '$lib/components/WorkOverlay.svelte';
+  import { listenForAccount } from '$lib/account.svelte';
+  import { importAudioFromUrl } from '$lib/audio/import';
+  import { openStemSessionFromSong } from '$lib/audio/open-stems-session';
   import { readStudioLaunch } from '$lib/ai/launch';
   import {
     newProject,
-    openProject,
+    openSessionFinder,
     refreshRecentProjects,
+    restoreStoredSession,
     saveProject,
     saveProjectAs,
     startAutosave
   } from '$lib/persistence/documents.svelte';
+  import {
+    requestParentSessions,
+    seedMaestro,
+    sessionGate,
+    currentStudioSession,
+    upsertSession,
+    type StudioSession
+  } from '$lib/persistence/sessions.svelte';
+  import { hydrateDawSessionsFromCloud } from '$lib/persistence/daw-db';
+  import { arrangeHasAudio } from '$lib/ai/session-inventory';
+  import { maestroWallet } from '$lib/ai/maestro-wallet.svelte';
+  import { workProgress } from '$lib/stores/work-progress.svelte';
   import { engine, initApp, projectStore, transport, workspace } from '$lib/stores';
+  import { studioHelp } from '$lib/stores/help.svelte';
 
   let booting = $state(true);
 
@@ -64,20 +84,103 @@
     return Boolean(track && (track.type === 'midi' || track.type === 'instrument'));
   }
 
-  onMount(() => {
-    const launch = readStudioLaunch();
-    if (launch.session) projectStore.rename(launch.session);
-    if (launch.idea) {
-      sessionStorage.setItem('qamuz.maestro.seed', launch.idea);
-      sessionStorage.setItem('qamuz.maestro.autoPlan', launch.autoPlan ? '1' : '0');
-      workspace.open('maestro');
+  async function openMaestroSession(session: StudioSession, isNew: boolean) {
+    if (!isNew) {
+      const restored = await restoreStoredSession(session.name);
+      if (restored) {
+        upsertSession(session);
+        workspace.open('arrange');
+        seedMaestro({
+          idea: session.idea,
+          autoPlan: false,
+          isNew: false,
+          sessionName: session.name,
+          audioUrl: session.audioUrl
+        });
+        return;
+      }
     }
 
-    void initApp().finally(() => (booting = false));
-    void refreshRecentProjects();
+    const keepStems = arrangeHasAudio();
+    if (!keepStems) {
+      newProject({ force: true });
+    }
+    projectStore.rename(keepStems ? projectStore.project.name : session.name);
+    upsertSession(keepStems ? { ...session, name: projectStore.project.name } : session);
+    if (session.tempo && session.tempo >= 60 && session.tempo <= 200) {
+      transport.setTempo(session.tempo);
+      projectStore.setTempo(session.tempo);
+    }
+    workspace.open(keepStems ? 'arrange' : 'maestro');
+    seedMaestro({
+      idea: session.idea,
+      autoPlan: isNew && !keepStems,
+      isNew: isNew && !keepStems,
+      sessionName: currentStudioSession.record?.name || session.name,
+      audioUrl: session.audioUrl
+    });
+    if (!isNew && !keepStems && session.audioUrl) {
+      const placed = await importAudioFromUrl(session.audioUrl, session.title || session.name);
+      if (!placed.clipID) {
+        console.warn(placed.error ?? 'Audio de sesión no disponible');
+      }
+    }
+  }
+
+  function startNewSong() {
+    sessionGate.open('idea');
+  }
+
+  onMount(() => {
     const stopAutosave = startAutosave();
+    const stopAccount = listenForAccount();
+
+    void (async () => {
+      try {
+        await initApp();
+        await maestroWallet.refresh();
+        await requestParentSessions();
+        await hydrateDawSessionsFromCloud();
+        const launch = readStudioLaunch();
+        if (launch.extractStems && launch.musicId) {
+          newProject({ force: true });
+          projectStore.showAI = true;
+          try {
+            await openStemSessionFromSong({
+              musicId: launch.musicId,
+              session: launch.session,
+              idea: launch.idea,
+              genre: launch.genre,
+              instrumental: launch.instrumental,
+              bpm: launch.bpm
+            });
+          } catch (error) {
+            console.warn(error);
+            workProgress.fail((error as Error).message);
+            sessionGate.open();
+          }
+        } else if (launch.session || launch.idea) {
+          await openMaestroSession(
+            {
+              name: launch.session || 'Untitled Project',
+              idea: launch.idea,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              stage: launch.autoPlan ? 'planning' : 'open'
+            },
+            launch.autoPlan
+          );
+        } else {
+          sessionGate.open();
+        }
+        await refreshRecentProjects();
+      } finally {
+        booting = false;
+      }
+    })();
 
     return () => {
+      stopAccount();
       stopAutosave();
       engine.dispose();
     };
@@ -104,6 +207,17 @@
   }
 
   async function onKeyDown(event: KeyboardEvent) {
+    if (event.key === 'F1') {
+      event.preventDefault();
+      studioHelp.toggle();
+      return;
+    }
+    if (studioHelp.open && event.key === 'Escape') {
+      event.preventDefault();
+      studioHelp.hide();
+      return;
+    }
+    if (studioHelp.open) return;
     if (isTyping(event.target)) return;
 
     const mod = event.metaKey || event.ctrlKey;
@@ -122,11 +236,16 @@
           return;
         case 'o':
           event.preventDefault();
-          await openProject();
+          await openSessionFinder();
+          return;
+        case 'i':
+          event.preventDefault();
+          workspace.open('arrange');
+          projectStore.showInspector = !projectStore.showInspector;
           return;
         case 'n':
           event.preventDefault();
-          newProject();
+          startNewSong();
           return;
         case 'd':
           event.preventDefault();
@@ -139,6 +258,7 @@
     switch (event.key) {
       case ' ':
         event.preventDefault();
+        if (sessionGate.visible) sessionGate.close();
         await engine.backend.resume();
         transport.togglePlayPause();
         break;
@@ -149,7 +269,11 @@
       case 'Delete':
       case 'Backspace':
         event.preventDefault();
-        projectStore.deleteSelectedClips();
+        if (projectStore.selectedClipIDs.length) {
+          projectStore.deleteSelectedClips();
+        } else if (projectStore.selectedTrackID) {
+          projectStore.deleteTrack(projectStore.selectedTrackID);
+        }
         break;
       case 'l':
       case 'L':
@@ -205,7 +329,7 @@
         <span>Menú</span>
       </button>
     {/if}
-    <TransportBar onNewProject={newProject} onSaveProject={saveProject} />
+    <TransportBar />
 
     <div class="body">
       {#if projectStore.showVRack && workspace.showsArrange}
@@ -285,9 +409,15 @@
     </div>
 
     <StatusBar {booting} />
+    <WorkOverlay />
+    <HelpOverlay />
+    {#if sessionGate.visible && workspace.module !== 'settings' && workspace.module !== 'export' && workspace.module !== 'mastering'}
+      <SessionGate onOpen={openMaestroSession} />
+    {/if}
   </div>
 </div>
 <GenerateDialog />
+<SaveDialog />
 
 <style>
   .shell {

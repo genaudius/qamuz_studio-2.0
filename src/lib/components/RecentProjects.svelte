@@ -2,7 +2,7 @@
   /** Recent-projects menu, shown from the Open button in the transport bar. */
 
   import Icon from './Icon.svelte';
-  import { openProject, openProjectAtPath, recentProjects } from '$lib/persistence/documents.svelte';
+  import { openSessionFinder, openProjectAtPath, recentProjects } from '$lib/persistence/documents.svelte';
 
   let open = $state(false);
 
@@ -18,7 +18,7 @@
 </script>
 
 <div class="recent">
-  <button class="chip" title="Open project" onclick={() => openProject()}>
+  <button class="chip" title="Abrir sesión o proyecto" onclick={() => void openSessionFinder()}>
     <Icon name="folder" size={12} /> Open
   </button>
 

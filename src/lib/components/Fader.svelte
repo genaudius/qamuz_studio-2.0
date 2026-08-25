@@ -7,7 +7,7 @@
    * of the pixels.
    */
 
-  import { formatDb } from '$lib/core/time';
+  import { formatDb, meterThrow } from '$lib/core/time';
 
   interface Props {
     /** Linear gain, 0 to 2. */
@@ -45,6 +45,7 @@
   }
 
   const position = $derived(toPosition(value));
+  const peakThrow = $derived(meterThrow(peak));
 
   let dragging = false;
 
@@ -99,12 +100,15 @@
     <span class="cap" style:bottom="{position * 100}%"></span>
   </div>
 
-  <div class="meter">
-    <span class="meter-fill" style:height="{Math.min(1, peak) * 100}%"></span>
+  <div class="meter" title="Pico">
+    <span class="meter-fill" style:height="{peakThrow * 100}%"></span>
   </div>
 </div>
 
-<span class="db">{formatDb(value)}</span>
+<div class="readouts">
+  <span class="db" title="Ganancia">{formatDb(value)}</span>
+  <span class="peak" title="Pico">{formatDb(peak)}</span>
+</div>
 
 <style>
   .fader-row {
@@ -155,7 +159,7 @@
 
   .meter {
     position: relative;
-    width: 5px;
+    width: 8px;
     border-radius: 2px;
     background: var(--bg-inset);
     border: 1px solid var(--stroke);
@@ -171,12 +175,24 @@
     transition: height 60ms linear;
   }
 
-  .db {
+  .readouts {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+
+  .db,
+  .peak {
     display: block;
     text-align: center;
     font-family: var(--font-mono);
     font-size: 9px;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
+  }
+
+  .peak {
+    color: var(--tempo);
   }
 </style>

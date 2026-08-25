@@ -128,6 +128,32 @@ pub fn write_audio_into_package(
     Ok(format!("{AUDIO_DIR}/{file_name}"))
 }
 
+fn sanitize_relative(path: &str) -> Result<PathBuf, String> {
+    let normalized = path.replace('\\', "/");
+    let candidate = PathBuf::from(&normalized);
+    if candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(format!("Invalid relative path: {path}"));
+    }
+    Ok(candidate)
+}
+
+/// Write one file inside a Pro Tools-style session folder (Audio Files, MIDI Files, …).
+#[tauri::command]
+pub fn write_session_file(folder: String, relative_path: String, bytes: Vec<u8>) -> Result<String, String> {
+    let root = PathBuf::from(&folder);
+    let relative = sanitize_relative(&relative_path)?;
+    let dest = root.join(&relative);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create folder: {e}"))?;
+    }
+    fs::write(&dest, bytes).map_err(|e| format!("Failed to write {}: {e}", relative.display()))?;
+    Ok(to_string(&dest))
+}
+
 #[tauri::command]
 pub fn read_audio_file(path: String) -> Result<Vec<u8>, String> {
     fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))
@@ -221,6 +247,19 @@ mod tests {
             read_audio_file(to_string(&PathBuf::from(&package).join(&relative))).unwrap(),
             vec![1, 2, 3]
         );
+    }
+
+    #[test]
+    fn writes_session_files_into_named_folders() {
+        let root = temp_dir("session-pack");
+        let folder = to_string(&root.join("Amor"));
+        write_session_file(folder.clone(), "Audio Files/Bajo.wav".into(), vec![9, 8, 7]).unwrap();
+        write_session_file(folder.clone(), "MIDI Files/Piano.mid".into(), vec![1]).unwrap();
+        assert_eq!(
+            fs::read(PathBuf::from(&folder).join("Audio Files").join("Bajo.wav")).unwrap(),
+            vec![9, 8, 7]
+        );
+        assert!(write_session_file(folder, "../escape.wav".into(), vec![1]).is_err());
     }
 }
 

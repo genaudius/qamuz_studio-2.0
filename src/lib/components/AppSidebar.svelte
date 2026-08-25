@@ -5,13 +5,16 @@
 
   import Icon from './Icon.svelte';
   import { goHome } from '$lib/saas';
-  import { newProject, openProject, saveProject } from '$lib/persistence/documents.svelte';
+  import { saveProject, openSessionFinder } from '$lib/persistence/documents.svelte';
+  import { sessionGate } from '$lib/persistence/sessions.svelte';
+  import { chooseSessionFiles } from '$lib/audio/import-session';
   import { projectStore, workspace, type StudioModule } from '$lib/stores';
+  import { studioHelp } from '$lib/stores/help.svelte';
 
   interface Item {
-    id: StudioModule | 'home' | 'new' | 'open' | 'save';
+    id: StudioModule | 'home' | 'new' | 'open' | 'save' | 'inspector' | 'audio' | 'import' | 'help';
     label: string;
-    icon: 'home' | 'file-plus' | 'folder' | 'save' | 'layout' | 'sparkles' | 'mixer' | 'pianoroll' | 'keyboard' | 'disc' | 'download' | 'gear';
+    icon: 'home' | 'file-plus' | 'folder' | 'save' | 'layout' | 'sparkles' | 'mixer' | 'pianoroll' | 'keyboard' | 'disc' | 'download' | 'gear' | 'inspector' | 'waveform' | 'help';
     module?: StudioModule;
   }
 
@@ -29,7 +32,10 @@
       title: 'Crear',
       items: [
         { id: 'arrange', label: 'Arrange', icon: 'layout', module: 'arrange' },
-        { id: 'maestro', label: 'Maestro', icon: 'sparkles', module: 'maestro' }
+        { id: 'import', label: 'Importar stems', icon: 'waveform' },
+        { id: 'maestro', label: 'Maestro', icon: 'sparkles', module: 'maestro' },
+        { id: 'inspector', label: 'Inspector', icon: 'inspector' },
+        { id: 'audio', label: 'Audio / MIDI', icon: 'waveform' }
       ]
     },
     {
@@ -50,6 +56,9 @@
   ];
 
   function isActive(item: Item): boolean {
+    if (item.id === 'inspector') return projectStore.showInspector && workspace.showsArrange;
+    if (item.id === 'audio') return workspace.module === 'settings';
+    if (item.id === 'import') return false;
     return Boolean(item.module && workspace.module === item.module);
   }
 
@@ -59,16 +68,33 @@
       return;
     }
     if (item.id === 'new') {
-      newProject();
-      workspace.open('arrange');
+      sessionGate.open('idea');
       return;
     }
     if (item.id === 'open') {
-      await openProject();
+      await openSessionFinder();
       return;
     }
     if (item.id === 'save') {
       await saveProject();
+      return;
+    }
+    if (item.id === 'inspector') {
+      workspace.open('arrange');
+      projectStore.showInspector = !projectStore.showInspector;
+      return;
+    }
+    if (item.id === 'import') {
+      workspace.open('arrange');
+      await chooseSessionFiles();
+      return;
+    }
+    if (item.id === 'audio') {
+      workspace.open('settings');
+      return;
+    }
+    if (item.id === 'help') {
+      studioHelp.toggle();
       return;
     }
     if (item.module) workspace.open(item.module);
@@ -108,6 +134,18 @@
   {/each}
 
   <span class="flex"></span>
+
+  <button
+    class="item"
+    class:active={studioHelp.open}
+    title="Ayuda (F1)"
+    onclick={() => studioHelp.toggle()}
+  >
+    <Icon name="help" size={15} />
+    {#if workspace.sidebarExpanded}
+      <span>Ayuda</span>
+    {/if}
+  </button>
 
   <button
     class="item"

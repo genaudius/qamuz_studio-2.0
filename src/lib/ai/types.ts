@@ -45,6 +45,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   text: string;
   createdAt: string;
+  chips?: string[];
+  actions?: { id: string; label: string; prompt: string }[];
 }
 
 export interface TrackNoteContext {
