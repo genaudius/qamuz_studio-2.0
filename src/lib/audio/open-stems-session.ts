@@ -41,6 +41,71 @@ async function fetchMixBytes(musicId: string): Promise<ArrayBuffer> {
   return response.arrayBuffer();
 }
 
+/** Load the Create Music mix onto one audio track. Maestro stays idle. */
+export async function openMixSessionFromSong(launch: StemSessionLaunch): Promise<void> {
+  const title = songSessionTitle({ title: launch.session, prompt: launch.idea });
+  workProgress.start('Abriendo en Studio', ['Leyendo la mezcla', 'Colocando la pista'], `Abriendo “${title}”…`);
+  setStatus(`Abriendo “${title}” en Studio…`);
+
+  try {
+    workProgress.advance(0, 'Traigo el audio de la canción…');
+    const bytes = await fetchMixBytes(launch.musicId);
+    const mix = await decodeAudioBytes(bytes);
+    const bpm = resolveSessionTempo({
+      hinted: launch.bpm,
+      prompt: launch.idea,
+      buffer: mix
+    });
+    transport.setTempo(bpm);
+    projectStore.setTempo(bpm);
+
+    for (const track of [...projectStore.project.tracks]) {
+      projectStore.deleteTrack(track.id);
+    }
+
+    projectStore.rename(title);
+    upsertSession({
+      name: title,
+      title,
+      idea: launch.idea || title,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      stage: 'imported',
+      audioUrl: `/api/music/${launch.musicId}`,
+      tempo: bpm
+    });
+    sessionGate.close();
+    workspace.open('arrange');
+    projectStore.showAI = true;
+
+    workProgress.advance(1, 'Coloco la mezcla en el arrange…');
+    const track = projectStore.addTrack('audio', title);
+    const placed = await importDecodedBuffer(mix, track.id, 0, title);
+    if (!placed.clipID) {
+      projectStore.deleteTrack(track.id);
+      throw new Error(placed.error ?? 'No pude colocar la mezcla en el arrange');
+    }
+
+    const { snapImportedSessionToBar } = await import('./conductor-snap');
+    const snap = snapImportedSessionToBar({
+      bpm,
+      prompt: launch.idea,
+      buffer: mix
+    });
+    void persistDawSession();
+    setStatus(
+      snap
+        ? `Sesión “${title}” · ${snap.bpm} BPM · ${snap.entryPosition} @ ${snap.entrySeconds.toFixed(3)} s`
+        : `Sesión “${title}” · ${bpm} BPM`,
+      'success'
+    );
+    workProgress.stop();
+  } catch (error) {
+    workProgress.fail((error as Error).message);
+    throw error;
+  }
+}
+
 function bufferFromStem(
   context: AudioContext,
   left: Float32Array,
@@ -135,6 +200,13 @@ export async function openStemSessionFromSong(launch: StemSessionLaunch): Promis
 
     if (!imported.length) throw new Error('Los stems no se pudieron colocar en el arrange');
 
+    const { snapImportedSessionToBar } = await import('./conductor-snap');
+    const snap = snapImportedSessionToBar({
+      bpm,
+      prompt: launch.idea,
+      buffer: mix
+    });
+
     const gate = await maestroWallet.spend('stems');
     appendWorkEvent(
       'stems',
@@ -152,7 +224,12 @@ export async function openStemSessionFromSong(launch: StemSessionLaunch): Promis
         }
       })
     );
-    setStatus(`Sesión “${title}” · ${bpm} BPM · ${imported.join(', ')}`, 'success');
+    setStatus(
+      snap
+        ? `Sesión “${title}” · ${snap.bpm} BPM · ${snap.entryPosition} @ ${snap.entrySeconds.toFixed(3)} s · ${imported.join(', ')}`
+        : `Sesión “${title}” · ${bpm} BPM · ${imported.join(', ')}`,
+      'success'
+    );
     workProgress.stop();
   } catch (error) {
     workProgress.fail((error as Error).message);

@@ -195,6 +195,14 @@ export async function importSessionSources(
   patchCurrentSession({ stage: ok.length ? 'imported' : currentStudioSession.record?.stage });
   sessionGate.close();
   workspace.open('arrange');
+
+  let snapNote = '';
+  if (ok.length) {
+    const { snapImportedSessionToBar } = await import('./conductor-snap');
+    const snap = snapImportedSessionToBar({});
+    if (snap) snapNote = ` ${snap.message}`;
+  }
+
   void persistDawSession();
   engine.rebuildSchedule();
 
@@ -204,7 +212,7 @@ export async function importSessionSources(
       : 'No importé archivos de audio, MIDI o instrumentos.',
     failed.length ? `No pude leer: ${failed.map((item) => `${item.name} (${item.error})`).join('; ')}.` : '',
     ok.length
-      ? 'Ya puedes dar Play. El título de la sesión se cambia con doble clic arriba en la barra. Pon el BPM de la canción si no coincide.'
+      ? `Play arranca en 1|1.${snapNote} El título se cambia con doble clic arriba.`
       : ''
   ]
     .filter(Boolean)

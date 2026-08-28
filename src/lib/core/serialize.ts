@@ -36,7 +36,7 @@ import type {
   TimeSignatureChange
 } from './project';
 import { CURRENT_FORMAT_VERSION } from './project';
-import type { TimePosition, TimeRange } from './time';
+import { clampPpq, DEFAULT_PPQ, type TimePosition, type TimeRange } from './time';
 import type {
   InputSource,
   MIDIOutputDestination,
@@ -874,6 +874,8 @@ export function encodeProject(p: Project): Json {
       numerator: p.timeSignature.numerator,
       denominator: p.timeSignature.denominator
     },
+    ppq: p.ppq,
+    timelineOriginSeconds: p.timelineOriginSeconds,
     tempoChanges: p.tempoChanges.map(encodeTempoChange),
     timeSignatureChanges: p.timeSignatureChanges.map(encodeTimeSignatureChange),
     sampleRate: p.sampleRate,
@@ -908,6 +910,8 @@ export function decodeProject(value: unknown): Project {
         denominator: num(sig.denominator, 'project.timeSignature.denominator', 4)
       };
     })(),
+    ppq: clampPpq(num(o.ppq, 'project.ppq', DEFAULT_PPQ)),
+    timelineOriginSeconds: Math.max(0, num(o.timelineOriginSeconds, 'project.timelineOriginSeconds', 0)),
     tempoChanges: arr(o.tempoChanges).map((c, i) =>
       decodeTempoChange(c, `project.tempoChanges[${i}]`)
     ),

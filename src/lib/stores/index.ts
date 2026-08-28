@@ -22,6 +22,10 @@ export async function initApp(): Promise<void> {
 
   transport.bpm = projectStore.project.tempo.bpm;
   transport.timeSignature = { ...projectStore.project.timeSignature };
+  transport.syncBarOneFromSeconds(
+    projectStore.project.timelineOriginSeconds,
+    projectStore.project.tempo.bpm
+  );
 
   await engine.init(projectStore, transport);
 

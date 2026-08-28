@@ -77,3 +77,75 @@ export function resolveSessionTempo(options: {
   }
   return 120;
 }
+
+export interface BarAnchors {
+  firstAudibleSeconds: number;
+  firstStrongBeatSeconds: number;
+}
+
+function rmsEnvelope(channel: Float32Array, sampleRate: number): { rms: Float32Array; hop: number } {
+  const hop = Math.max(1, Math.floor(sampleRate / 200));
+  const count = Math.floor(channel.length / hop);
+  const rms = new Float32Array(Math.max(1, count));
+  for (let i = 0; i < count; i++) {
+    const start = i * hop;
+    let energy = 0;
+    for (let j = 0; j < hop && start + j < channel.length; j++) {
+      const s = channel[start + j];
+      energy += s * s;
+    }
+    rms[i] = Math.sqrt(energy / hop);
+  }
+  return { rms, hop };
+}
+
+/**
+ * First audible onset and the first later ensemble-strength hit.
+ * Used so 1|1 can sit on the musical entry without editing the WAV.
+ */
+export function findBarAnchors(buffer: AudioBuffer): BarAnchors | null {
+  const channel = buffer.getChannelData(0);
+  if (channel.length < buffer.sampleRate * 0.05) return null;
+  const { rms, hop } = rmsEnvelope(channel, buffer.sampleRate);
+  if (rms.length < 8) return null;
+
+  const ranked = Array.from(rms).sort((a, b) => a - b);
+  const noise = ranked[Math.floor(ranked.length * 0.12)] || 1e-6;
+  const audible = Math.max(noise * 10, 0.003);
+
+  let first = -1;
+  for (let i = 0; i < rms.length; i++) {
+    if (rms[i] >= audible) {
+      first = i;
+      break;
+    }
+  }
+  if (first < 0) return null;
+
+  const flux = new Float32Array(rms.length);
+  for (let i = 1; i < rms.length; i++) flux[i] = Math.max(0, rms[i] - rms[i - 1]);
+
+  const searchEnd = Math.min(rms.length - 2, first + Math.floor((8 * buffer.sampleRate) / hop));
+  let fluxMean = 0;
+  let fluxCount = 0;
+  for (let i = first; i < searchEnd; i++) {
+    fluxMean += flux[i];
+    fluxCount += 1;
+  }
+  fluxMean = fluxMean / Math.max(1, fluxCount);
+
+  let strong = first;
+  for (let i = first + 2; i < searchEnd; i++) {
+    const peak = flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1];
+    if (!peak) continue;
+    if (flux[i] >= flux[first] * 2.1 && flux[i] >= fluxMean * 3.5) {
+      strong = i;
+      break;
+    }
+  }
+
+  return {
+    firstAudibleSeconds: (first * hop) / buffer.sampleRate,
+    firstStrongBeatSeconds: (strong * hop) / buffer.sampleRate
+  };
+}

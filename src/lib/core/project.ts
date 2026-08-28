@@ -2,7 +2,14 @@
 
 import type { AutomationCurve } from './automation';
 import type { AudioFileReference, Clip } from './clip';
-import { rangeEnd, type TimeRange, type Tempo, type TimeSignature, COMMON_TIME } from './time';
+import {
+  rangeEnd,
+  type TimeRange,
+  type Tempo,
+  type TimeSignature,
+  COMMON_TIME,
+  DEFAULT_PPQ
+} from './time';
 import { makeTrack, type Track, type TrackColor } from './track';
 import { newUUID } from './uuid';
 import { makeVRack, type VRack } from './vrack';
@@ -84,6 +91,10 @@ export interface Project {
 
   tempo: Tempo;
   timeSignature: TimeSignature;
+  /** Ticks per quarter. Clone 1.0 used 480; Pro Tools / GenAudius clocks use 960. */
+  ppq: number;
+  /** File seconds where 1|1 sits. 0 means the timeline origin is bar 1. */
+  timelineOriginSeconds: number;
   tempoChanges: TempoChange[];
   timeSignatureChanges: TimeSignatureChange[];
 
@@ -135,6 +146,8 @@ export function createNewProject(name = 'Untitled Project', sampleRate = 44100):
     modifiedAt: now,
     tempo: { bpm: 120 },
     timeSignature: { ...COMMON_TIME },
+    ppq: DEFAULT_PPQ,
+    timelineOriginSeconds: 0,
     tempoChanges: [],
     timeSignatureChanges: [],
     sampleRate,

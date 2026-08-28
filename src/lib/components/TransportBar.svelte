@@ -10,7 +10,7 @@
   import MIDIMonitor from './MIDIMonitor.svelte';
   import UserMenu from './UserMenu.svelte';
   import { engine, projectStore, transport, workspace } from '$lib/stores';
-  import { formatBarsBeats, formatClock } from '$lib/core/time';
+  import { formatBarsBeats, formatClock, PPQ_PRESETS, secondsToBeats } from '$lib/core/time';
   import { persistDawSession } from '$lib/persistence/daw-db';
   import { renameCurrentSession, sessionGate } from '$lib/persistence/sessions.svelte';
 
@@ -24,7 +24,13 @@
 
   // The readouts follow the smooth playhead, which is why they move at display
   // rate instead of jumping one audio buffer at a time.
-  const bars = $derived(formatBarsBeats(transport.smoothPlayheadBeats, transport.timeSignature));
+  const musicalBeats = $derived(
+    transport.smoothPlayheadBeats -
+      secondsToBeats(projectStore.project.timelineOriginSeconds, transport.bpm)
+  );
+  const bars = $derived(
+    formatBarsBeats(musicalBeats, transport.timeSignature, projectStore.project.ppq)
+  );
   const clock = $derived(formatClock((transport.smoothPlayheadBeats / transport.bpm) * 60));
 
   function startNameEdit() {
@@ -60,6 +66,10 @@
     if (Number.isFinite(value)) {
       transport.setTempo(value);
       projectStore.setTempo(transport.bpm);
+      transport.syncBarOneFromSeconds(
+        projectStore.project.timelineOriginSeconds,
+        transport.bpm
+      );
     }
     editingTempo = false;
   }
@@ -72,6 +82,7 @@
   function nudgeTempo(delta: number) {
     transport.nudgeTempo(delta);
     projectStore.setTempo(transport.bpm);
+    transport.syncBarOneFromSeconds(projectStore.project.timelineOriginSeconds, transport.bpm);
   }
 
   function tapTempo() {
@@ -81,7 +92,10 @@
     tapTimes = [...tapTimes, now].slice(-5);
 
     transport.tapTempo(tapTimes);
-    if (tapTimes.length >= 2) projectStore.setTempo(transport.bpm);
+    if (tapTimes.length >= 2) {
+      projectStore.setTempo(transport.bpm);
+      transport.syncBarOneFromSeconds(projectStore.project.timelineOriginSeconds, transport.bpm);
+    }
   }
 
   function cycleTimeSignature() {
@@ -102,6 +116,14 @@
     transport.timeSignature = next;
     projectStore.setTimeSignature(next.numerator, next.denominator);
     engine.backend.setMetronomeGrid(transport.bpm, next);
+  }
+
+  function cyclePpq() {
+    const current = PPQ_PRESETS.indexOf(
+      projectStore.project.ppq as (typeof PPQ_PRESETS)[number]
+    );
+    const next = PPQ_PRESETS[(current < 0 ? 0 : current + 1) % PPQ_PRESETS.length];
+    projectStore.setPpq(next);
   }
 
   async function toggleRecord() {
@@ -199,11 +221,20 @@
 
     <button class="tap" title="Tap tempo" onclick={tapTempo}>TAP</button>
 
-    <button class="readout sig" title="Change time signature" onclick={cycleTimeSignature}>
+    <button class="readout sig" title="Change time signature (Conductor)" onclick={cycleTimeSignature}>
       <span class="readout-label">SIG</span>
       <span class="sig-value">
         {transport.timeSignature.numerator}/{transport.timeSignature.denominator}
       </span>
+    </button>
+
+    <button
+      class="readout sig ppq"
+      title="Ticks per quarter — 480 MIDI clone, 960 Pro Tools"
+      onclick={cyclePpq}
+    >
+      <span class="readout-label">PPQ</span>
+      <span class="sig-value">{projectStore.project.ppq}</span>
     </button>
   </div>
 
@@ -372,7 +403,7 @@
   }
 
   .bars {
-    min-width: 84px;
+    min-width: 108px;
   }
 
   .time {
@@ -411,6 +442,10 @@
 
   .sig {
     min-width: 38px;
+  }
+
+  .ppq {
+    min-width: 48px;
   }
 
   .sig-value {

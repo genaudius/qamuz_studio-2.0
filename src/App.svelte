@@ -25,7 +25,7 @@
   import WorkOverlay from '$lib/components/WorkOverlay.svelte';
   import { listenForAccount } from '$lib/account.svelte';
   import { importAudioFromUrl } from '$lib/audio/import';
-  import { openStemSessionFromSong } from '$lib/audio/open-stems-session';
+  import { openMixSessionFromSong, openStemSessionFromSong } from '$lib/audio/open-stems-session';
   import { readStudioLaunch } from '$lib/ai/launch';
   import {
     newProject,
@@ -110,6 +110,10 @@
     if (session.tempo && session.tempo >= 60 && session.tempo <= 200) {
       transport.setTempo(session.tempo);
       projectStore.setTempo(session.tempo);
+      transport.syncBarOneFromSeconds(
+        projectStore.project.timelineOriginSeconds,
+        transport.bpm
+      );
     }
     workspace.open(keepStems ? 'arrange' : 'maestro');
     seedMaestro({
@@ -142,18 +146,23 @@
         await requestParentSessions();
         await hydrateDawSessionsFromCloud();
         const launch = readStudioLaunch();
-        if (launch.extractStems && launch.musicId) {
+        if (launch.musicId) {
           newProject({ force: true });
           projectStore.showAI = true;
           try {
-            await openStemSessionFromSong({
+            const payload = {
               musicId: launch.musicId,
               session: launch.session,
               idea: launch.idea,
               genre: launch.genre,
               instrumental: launch.instrumental,
               bpm: launch.bpm
-            });
+            };
+            if (launch.extractStems) {
+              await openStemSessionFromSong(payload);
+            } else {
+              await openMixSessionFromSong(payload);
+            }
           } catch (error) {
             console.warn(error);
             workProgress.fail((error as Error).message);

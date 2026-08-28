@@ -25,6 +25,7 @@ import {
 import { lastContentBeats } from '$lib/core/timeline';
 import {
   GRID_DIVISIONS,
+  clampPpq,
   fromBeats,
   rangeFromBeats,
   toBeats,
@@ -248,6 +249,18 @@ export class ProjectStore {
   setTimeSignature(numerator: number, denominator: number): void {
     this.mutate('Change Time Signature', () => {
       this.project.timeSignature = { numerator, denominator };
+    });
+  }
+
+  setPpq(ppq: number): void {
+    this.mutate('Change PPQ', () => {
+      this.project.ppq = clampPpq(ppq);
+    });
+  }
+
+  setTimelineOriginSeconds(seconds: number): void {
+    this.mutate('Change 1|1 origin', () => {
+      this.project.timelineOriginSeconds = Math.max(0, seconds);
     });
   }
 
@@ -615,6 +628,21 @@ export class ProjectStore {
         );
       })
     );
+  }
+
+  /** Keep stems locked together while the Conductor count-in is inserted. */
+  shiftAllClipsByBeats(delta: number): void {
+    if (!Number.isFinite(delta) || Math.abs(delta) < 1e-9) return;
+    const bpm = this.project.tempo.bpm;
+    const sampleRate = this.project.sampleRate;
+    this.mutate('Align clips to bar', () => {
+      for (const track of this.project.tracks) {
+        for (const clip of track.clips) {
+          const start = Math.max(0, toBeats(clip.timeRange.start, bpm) + delta);
+          clip.timeRange.start = fromBeats(start, bpm, sampleRate);
+        }
+      }
+    });
   }
 
   setClipLength(clipID: string, lengthBeats: number): void {

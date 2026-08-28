@@ -76,7 +76,7 @@ function interchangeXml(project: Project, files: { track: string; kind: 'audio' 
   const bpm = project.tempo.bpm;
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<QamuzSession version="1" name="${xmlEscape(project.name)}" tempo="${bpm}" sampleRate="${project.sampleRate}" timeSignature="${project.timeSignature.numerator}/${project.timeSignature.denominator}">`,
+    `<QamuzSession version="1" name="${xmlEscape(project.name)}" tempo="${bpm}" sampleRate="${project.sampleRate}" timeSignature="${project.timeSignature.numerator}/${project.timeSignature.denominator}" ppq="${project.ppq}" originSeconds="${project.timelineOriginSeconds}">`,
     `  <Folders audio="${AUDIO_DIR}" midi="${MIDI_DIR}" interchange="${INTERCHANGE_DIR}"/>`
   ];
   for (const file of files) {

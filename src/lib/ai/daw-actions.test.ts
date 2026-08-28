@@ -38,6 +38,12 @@ describe('inferDawAction mix', () => {
     expect(inferDawAction('añade una pista bus')?.args).toMatchObject({ type: 'bus' });
     expect(inferDawAction('añade una pista de audio')?.args).toMatchObject({ type: 'audio' });
   });
+
+  it('routes bar-exact alignment to the Conductor snap', () => {
+    expect(inferDawAction('alinea al compás exacto')?.name).toBe('snap_to_bar');
+    expect(inferDawAction('pon el golpe en el compás')?.name).toBe('snap_to_bar');
+    expect(inferDawAction('entra en el compás 2|2')?.name).toBe('snap_to_bar');
+  });
 });
 
 describe('mixStyleFromPrompt', () => {

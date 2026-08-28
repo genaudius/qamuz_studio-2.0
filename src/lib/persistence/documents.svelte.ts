@@ -93,6 +93,10 @@ export async function applyOpenedProject(projectJson: string, packagePath = ''):
     projectStore.load(envelope.project, packagePath || null);
     transport.bpm = envelope.project.tempo.bpm;
     transport.timeSignature = { ...envelope.project.timeSignature };
+    transport.syncBarOneFromSeconds(
+      envelope.project.timelineOriginSeconds,
+      envelope.project.tempo.bpm
+    );
     transport.setPlayheadBeats(envelope.project.dawState.playheadPosition || 0);
     projectStore.pixelsPerBeat = Math.max(8, (envelope.project.dawState.zoomLevel || 1) * 40);
     if (packagePath) {
@@ -527,6 +531,7 @@ export function newProject(options?: { force?: boolean }): void {
   projectStore.newProject();
   transport.bpm = projectStore.project.tempo.bpm;
   transport.timeSignature = { ...projectStore.project.timeSignature };
+  transport.syncBarOneFromSeconds(0, transport.bpm);
   transport.setPlayheadBeats(0);
   report('New project', 'idle');
 }

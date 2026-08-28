@@ -19,7 +19,7 @@ import {
   type TrackMeterLevel
 } from './backend';
 
-const WORKLET_URL = '/worklets/engine-processor.js';
+const WORKLET_URL = `${import.meta.env.BASE_URL}worklets/engine-processor.js`;
 const PROCESSOR_NAME = 'qamuz-engine';
 const SILENT_METER: TrackMeterLevel = { peak: 0, rms: 0 };
 

@@ -11,9 +11,14 @@
   import { INSTRUMENTS, type InstrumentName } from '$lib/audio/backend';
   import { trackInstrument } from '$lib/audio/instruments';
   import { trackLayoutLabel } from '$lib/audio/stems';
-  import { toBeats } from '$lib/core/time';
+  import {
+    formatBarsBeats,
+    PPQ_PRESETS,
+    secondsToBeats,
+    toBeats
+  } from '$lib/core/time';
   import { TRACK_COLORS, TRACK_COLOR_HEX, type InputSource } from '$lib/core/track';
-  import { engine, projectStore } from '$lib/stores';
+  import { engine, projectStore, transport } from '$lib/stores';
 
   const track = $derived(projectStore.selectedTrack);
   const isMIDI = $derived(track?.type === 'midi' || track?.type === 'instrument');
@@ -31,6 +36,14 @@
   );
   const clipLengthBeats = $derived(
     clip ? toBeats(clip.clip.timeRange.duration, projectStore.project.tempo.bpm) : 0
+  );
+
+  const musicalBeats = $derived(
+    transport.smoothPlayheadBeats -
+      secondsToBeats(projectStore.project.timelineOriginSeconds, transport.bpm)
+  );
+  const conductorPosition = $derived(
+    formatBarsBeats(musicalBeats, transport.timeSignature, projectStore.project.ppq)
   );
 
   const AUDIO_INPUTS: { label: string; value: string; source: InputSource }[] = [
@@ -67,6 +80,54 @@
 </div>
 
 <div class="scroll">
+  <section>
+    <p class="field-label">Conductor</p>
+    <p class="mono clock">{conductorPosition}</p>
+    <p class="hint">
+      {transport.timeSignature.numerator}/{transport.timeSignature.denominator}
+      · {projectStore.project.ppq} PPQ
+      · 1|1 = {projectStore.project.timelineOriginSeconds.toFixed(3)} s
+    </p>
+    <label class="field">
+      <span class="field-label">PPQ</span>
+      <select
+        value={String(projectStore.project.ppq)}
+        onchange={(e) => projectStore.setPpq(Number(e.currentTarget.value))}
+      >
+        {#each PPQ_PRESETS as ppq (ppq)}
+          <option value={ppq}>{ppq}{ppq === 960 ? ' · Pro Tools' : ppq === 480 ? ' · MIDI clone' : ''}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="field">
+      <span class="field-label">1|1 origin (s)</span>
+      <input
+        type="number"
+        min="0"
+        step="0.001"
+        value={projectStore.project.timelineOriginSeconds}
+        onchange={(e) => {
+          projectStore.setTimelineOriginSeconds(Number(e.currentTarget.value));
+          transport.syncBarOneFromSeconds(
+            projectStore.project.timelineOriginSeconds,
+            transport.bpm
+          );
+          transport.returnToZero();
+        }}
+      />
+    </label>
+    <button
+      type="button"
+      onclick={() => {
+        void import('$lib/audio/conductor-snap').then(({ snapImportedSessionToBar }) => {
+          snapImportedSessionToBar({ bpm: transport.bpm });
+        });
+      }}
+    >
+      Alinear entrada a 2|2
+    </button>
+  </section>
+
   {#if !track}
     <p class="empty">Select a track</p>
   {:else}
@@ -343,6 +404,18 @@
   .mono {
     font-family: var(--font-mono);
     font-size: 11px;
+  }
+
+  .clock {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 10px;
+    color: var(--text-tertiary);
   }
 
   .swatches {

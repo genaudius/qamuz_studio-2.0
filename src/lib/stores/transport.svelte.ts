@@ -17,6 +17,7 @@ import {
   formatBarsBeats,
   formatClock,
   fromBeats,
+  secondsToBeats,
   type TimeSignature
 } from '$lib/core/time';
 
@@ -61,8 +62,8 @@ export class TransportStore {
   isCountInEnabled = $state(false);
   countInBars = $state(1);
 
-  /** Beat position captured when playback started, for scheduling. */
-  playbackStartBeat = $state(0);
+  /** Beat position of 1|1. File time 0 can sit before this (pickup). */
+  barOneBeats = $state(0);
 
   #backend: AudioBackend | null = null;
   #frame: number | null = null;
@@ -157,8 +158,13 @@ export class TransportStore {
   }
 
   returnToZero(): void {
-    this.setPlayheadBeats(0);
+    this.setPlayheadBeats(this.barOneBeats);
     this.#emit('returnToZero');
+  }
+
+  /** Keep 1|1 locked to a file-time origin when tempo changes. */
+  syncBarOneFromSeconds(originSeconds: number, bpm = this.bpm): void {
+    this.barOneBeats = Math.max(0, secondsToBeats(Math.max(0, originSeconds), bpm));
   }
 
   // --- playhead ---
@@ -182,7 +188,7 @@ export class TransportStore {
 
   goToBar(bar: number): void {
     const perBar = beatsPerBar(this.timeSignature);
-    this.setPlayheadBeats(Math.max(0, bar - 1) * perBar);
+    this.setPlayheadBeats(this.barOneBeats + Math.max(0, bar - 1) * perBar);
   }
 
   // --- tempo ---

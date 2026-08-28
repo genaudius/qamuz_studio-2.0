@@ -1,7 +1,7 @@
 <script lang="ts">
   /** Bottom status strip: engine state, master meter, sample rate, selection. */
 
-  import { formatDb } from '$lib/core/time';
+  import { formatBarsBeats, formatDb, secondsToBeats } from '$lib/core/time';
   import { documentStatus } from '$lib/persistence/documents.svelte';
   import { engine, projectStore, transport } from '$lib/stores';
   import { studioHelp } from '$lib/stores/help.svelte';
@@ -28,6 +28,13 @@
   );
   const masterPeak = $derived(engine.masterMeter.peak);
   const range = $derived(projectStore.rangeSelection);
+  const musicalBeats = $derived(
+    transport.smoothPlayheadBeats -
+      secondsToBeats(projectStore.project.timelineOriginSeconds, transport.bpm)
+  );
+  const bars = $derived(
+    formatBarsBeats(musicalBeats, transport.timeSignature, projectStore.project.ppq)
+  );
 </script>
 
 <footer class="status">
@@ -38,6 +45,8 @@
 
   <span class="text">{trackCount} tracks</span>
   <span class="text dim">{clipCount} clips</span>
+  <span class="text mono">{bars}</span>
+  <span class="text dim">{projectStore.project.ppq} PPQ</span>
 
   {#if range}
     <div class="divider-v"></div>

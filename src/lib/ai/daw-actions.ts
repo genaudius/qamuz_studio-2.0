@@ -103,7 +103,19 @@ export async function executeDawAction(
         if (!Number.isFinite(bpm)) return { ok: false, message: 'BPM inválido.' };
         transport.setTempo(bpm);
         projectStore.setTempo(transport.bpm);
+        transport.syncBarOneFromSeconds(projectStore.project.timelineOriginSeconds, transport.bpm);
         return { ok: true, message: `Tempo ${transport.bpm.toFixed(1)} BPM.` };
+      }
+      case 'snap_to_bar': {
+        const { snapImportedSessionToBar } = await import('$lib/audio/conductor-snap');
+        const hinted = Number(args.bpm);
+        const origin = Number(args.barOneSeconds);
+        const snap = snapImportedSessionToBar({
+          bpm: Number.isFinite(hinted) ? hinted : undefined,
+          barOneSeconds: Number.isFinite(origin) ? origin : undefined
+        });
+        if (!snap) return { ok: false, message: 'No hay audio para alinear al compás.' };
+        return { ok: true, message: snap.message };
       }
       case 'add_track': {
         const raw = String(args.type ?? 'midi');
@@ -626,6 +638,13 @@ export function wantsSongPlan(text: string): boolean {
 export function inferDawAction(text: string): { name: string; args: Record<string, unknown> } | null {
   const t = text.trim().toLowerCase();
   if (/^(play|reproduc|play back)\b/.test(t)) return { name: 'play', args: {} };
+  if (
+    /\b(alinea|alinear|comp[aá]s exacto|1\|1|2\|2|bar one|golpe en (el )?comp[aá]s|entra(r)? en (el )?comp[aá]s)\b/.test(
+      t
+    )
+  ) {
+    return { name: 'snap_to_bar', args: {} };
+  }
   if (/^(stop|detener|para)\b/.test(t) && t.length < 24) return { name: 'stop', args: {} };
   if (/^(pause|pausa)\b/.test(t) && t.length < 24) return { name: 'pause', args: {} };
 

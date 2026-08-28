@@ -3,8 +3,10 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 const host = process.env.TAURI_DEV_HOST;
+const studioBase = process.env.QAMUZ_STUDIO_BASE || '/';
 
 export default defineConfig({
+  base: studioBase,
   plugins: [svelte()],
 
   resolve: {
@@ -22,7 +24,7 @@ export default defineConfig({
     cors: true,
     headers: {
       'Content-Security-Policy':
-        "frame-ancestors 'self' http://localhost:5173 http://127.0.0.1:5173 http://localhost:4173"
+        "frame-ancestors 'self' http://localhost:5173 http://127.0.0.1:5173 http://localhost:4173 https://qamuz.ai https://*.qamuz.ai"
     },
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
     watch: {
