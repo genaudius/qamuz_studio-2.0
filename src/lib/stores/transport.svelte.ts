@@ -99,7 +99,6 @@ export class TransportStore {
   play(): void {
     if (this.isPlaying) return;
 
-    this.playbackStartBeat = this.playheadBeats;
     this.isPlaying = true;
     this.isPaused = false;
 

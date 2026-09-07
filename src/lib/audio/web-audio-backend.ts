@@ -29,7 +29,8 @@ interface ClockMessage {
   contextTime: number;
   playing: boolean;
   meters: Record<string, TrackMeterLevel>;
-  master: TrackMeterLevel;
+  master: TrackMeterLevel & { truePeak?: number };
+  spectrum?: number[];
 }
 
 export class WebAudioBackend implements AudioBackend {
@@ -43,7 +44,9 @@ export class WebAudioBackend implements AudioBackend {
   #pausedSample = 0;
 
   #meters = new Map<string, TrackMeterLevel>();
-  #master: TrackMeterLevel = SILENT_METER;
+  #master: TrackMeterLevel & { truePeak?: number } = SILENT_METER;
+  #spectrum: number[] = [];
+  #fxBuses: Record<string, unknown> = {};
 
   #buffers = new Map<string, AudioBuffer>();
   #masterVolume = 1;
@@ -179,6 +182,7 @@ export class WebAudioBackend implements AudioBackend {
       this.#meters.set(id, level);
     }
     this.#master = message.master;
+    if (message.spectrum) this.#spectrum = message.spectrum;
   }
 
   #post(message: Record<string, unknown>): void {
@@ -220,6 +224,26 @@ export class WebAudioBackend implements AudioBackend {
 
   setTrackInstrument(trackID: string, instrument: InstrumentName): void {
     this.#setTrackParam(trackID, 'instrument', instrument);
+  }
+
+  setTrackChannelProcess(trackID: string, payload: Record<string, unknown>): void {
+    const params = this.#trackParams.get(trackID) ?? {};
+    Object.assign(params, payload);
+    this.#trackParams.set(trackID, params);
+    this.#post({ type: 'trackParams', trackID, ...payload });
+  }
+
+  setFxBuses(payload: Record<string, unknown>): void {
+    this.#fxBuses = payload;
+    this.#post({ type: 'fxBuses', ...payload });
+  }
+
+  setAnalysisListen(mode: 'stereo' | 'mid' | 'side'): void {
+    this.#post({ type: 'analysisListen', mode });
+  }
+
+  latestSpectrum(): number[] {
+    return this.#spectrum;
   }
 
   // --- MIDI ---
@@ -334,7 +358,7 @@ export class WebAudioBackend implements AudioBackend {
     return this.#meters.get(trackID) ?? SILENT_METER;
   }
 
-  masterMeterLevel(): TrackMeterLevel {
+  masterMeterLevel(): TrackMeterLevel & { truePeak?: number } {
     return this.#master;
   }
 
@@ -392,6 +416,9 @@ export class WebAudioBackend implements AudioBackend {
       numerator: this.#metronome.numerator
     });
     node.port.postMessage({ type: 'masterVolume', volume: this.#masterVolume });
+    if (Object.keys(this.#fxBuses).length > 0) {
+      node.port.postMessage({ type: 'fxBuses', ...this.#fxBuses });
+    }
     node.port.postMessage({ type: 'play', fromSample: Math.round(startSample) });
 
     const rendered = await context.startRendering();

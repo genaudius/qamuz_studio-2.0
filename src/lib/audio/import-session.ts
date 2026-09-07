@@ -13,16 +13,18 @@ import {
   instrumentForStem,
   type StemKind
 } from './stems';
-import { importAudioFile, importAudioPath, isAudioPath, type ImportResult } from './import';
+import { decodeAudioBytes, importAudioFile, importAudioPath, isAudioPath, type ImportResult } from './import';
+import { fingerprintAudioBuffer } from './audio-fingerprint';
 import { parseMidiFile } from '$lib/midi/midi-file';
 import { isTauri, readAudioFile } from '$lib/persistence/tauri';
-import { persistDawSession } from '$lib/persistence/daw-db';
+import { persistDawSession, persistFullSession } from '$lib/persistence/daw-db';
 import {
   currentStudioSession,
   patchCurrentSession,
   sessionGate,
   upsertSession
 } from '$lib/persistence/sessions.svelte';
+import { documentStatus } from '$lib/persistence/documents.svelte';
 import { engine, projectStore, transport, workspace } from '$lib/stores';
 
 export interface SessionImportItem {
@@ -54,6 +56,25 @@ function namedTrack(kind: 'audio' | 'midi' | 'instrument', filename: string) {
   return { track, stem };
 }
 
+async function fingerprintSource(source: {
+  path?: string;
+  file?: File;
+}): Promise<{ hash: string; duration: number } | null> {
+  try {
+    const bytes = source.file
+      ? await source.file.arrayBuffer()
+      : source.path
+        ? ((await readAudioFile(source.path)).buffer as ArrayBuffer)
+        : null;
+    if (!bytes) return null;
+    const buffer = await decodeAudioBytes(bytes);
+    const fp = fingerprintAudioBuffer(buffer);
+    return { hash: fp.hash, duration: fp.durationSec };
+  } catch {
+    return null;
+  }
+}
+
 async function importAudioOntoNewTrack(
   source: { path?: string; file?: File },
   startBeat: number
@@ -69,6 +90,11 @@ async function importAudioOntoNewTrack(
   if (!placed.clipID) {
     projectStore.deleteTrack(track.id);
     return { name: stem.name, kind: 'audio', error: placed.error ?? `No pude leer ${label}` };
+  }
+
+  const fp = await fingerprintSource(source);
+  if (fp && !currentStudioSession.record?.audioFingerprint) {
+    patchCurrentSession({ audioFingerprint: fp.hash, duration: fp.duration });
   }
 
   const found = projectStore.findClip(placed.clipID);
@@ -204,6 +230,7 @@ export async function importSessionSources(
   }
 
   void persistDawSession();
+  void persistFullSession().catch((error) => console.warn('persistFullSession after import', error));
   engine.rebuildSchedule();
 
   const summary = [
@@ -218,6 +245,10 @@ export async function importSessionSources(
     .filter(Boolean)
     .join(' ');
 
+  if (ok.length) {
+    documentStatus.message = summary;
+    documentStatus.tone = 'success';
+  }
   window.dispatchEvent(
     new CustomEvent('qamuz:stems-imported', {
       detail: { items, folderName, summary, autoMix: false }
@@ -356,7 +387,10 @@ type FsEntry = {
 export async function filesFromDataTransfer(data: DataTransfer): Promise<File[]> {
   const items = [...data.items];
   const entries = items
-    .map((item) => (item as DataTransferItem & { webkitGetAsEntry?: () => FsEntry | null }).webkitGetAsEntry?.())
+    .map<FsEntry | null | undefined>(
+      (item) =>
+        (item as DataTransferItem & { webkitGetAsEntry?: () => FsEntry | null }).webkitGetAsEntry?.()
+    )
     .filter((entry): entry is FsEntry => Boolean(entry));
 
   if (entries.length) {

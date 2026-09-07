@@ -77,6 +77,13 @@
 <div class="panel-title">
   <Icon name="inspector" size={12} />
   <span>Inspector</span>
+  <button
+    class="panel-close"
+    title="Cerrar inspector"
+    onclick={() => (projectStore.showInspector = false)}
+  >
+    <Icon name="close" size={12} />
+  </button>
 </div>
 
 <div class="scroll">

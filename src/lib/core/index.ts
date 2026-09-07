@@ -4,6 +4,7 @@ export * from './midi';
 export * from './automation';
 export * from './clip';
 export * from './track';
+export * from './channel-fx';
 export * from './vrack';
 export * from './project';
 export * from './serialize';

@@ -1,6 +1,7 @@
 /** Tracks and plugin slots. Port of DAWCore/Models/Track.swift. */
 
 import { makeAutomationLane, type AutomationLane } from './automation';
+import { makeChannelProcess, type ChannelProcess } from './channel-fx';
 import type { Clip } from './clip';
 import { newUUID } from './uuid';
 
@@ -104,6 +105,9 @@ export interface Track {
   midiOutput?: MIDIOutputDestination;
   pluginSlots: PluginSlot[];
 
+  /** Live channel PROCESS: pre-gain, EQ, comp, inserts, FX sends. */
+  channelProcess?: ChannelProcess;
+
   automationLanes: AutomationLane[];
   isAutomationVisible: boolean;
 
@@ -136,6 +140,7 @@ export function makeTrack(name: string, type: TrackType, color: TrackColor): Tra
     isArmed: false,
     clips: [],
     pluginSlots: [],
+    channelProcess: makeChannelProcess(),
     automationLanes: [makeAutomationLane({ kind: 'volume' }), makeAutomationLane({ kind: 'pan' })],
     isAutomationVisible: false,
     height: 80,

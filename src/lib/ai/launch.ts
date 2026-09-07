@@ -13,6 +13,8 @@ export interface StudioLaunch {
   genre: string;
   instrumental: boolean;
   bpm: number | null;
+  imageUrl: string;
+  forceNew: boolean;
 }
 
 export function readStudioLaunch(): StudioLaunch {
@@ -27,7 +29,9 @@ export function readStudioLaunch(): StudioLaunch {
       musicId: '',
       genre: '',
       instrumental: false,
-      bpm: null
+      bpm: null,
+      imageUrl: '',
+      forceNew: false
     };
   }
   const params = new URLSearchParams(window.location.search);
@@ -42,6 +46,8 @@ export function readStudioLaunch(): StudioLaunch {
     musicId: params.get('musicId') ?? '',
     genre: params.get('genre') ?? '',
     instrumental: params.get('instrumental') === '1',
-    bpm: Number.isFinite(bpmRaw) && bpmRaw >= 60 && bpmRaw <= 200 ? Math.round(bpmRaw) : null
+    bpm: Number.isFinite(bpmRaw) && bpmRaw >= 60 && bpmRaw <= 200 ? Math.round(bpmRaw) : null,
+    imageUrl: params.get('imageUrl') ?? '',
+    forceNew: params.get('forceNew') === '1'
   };
 }

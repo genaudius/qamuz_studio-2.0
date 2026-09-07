@@ -6,13 +6,21 @@
    */
 
   import Icon from './Icon.svelte';
+  import SongContextBadge from './SongContextBadge.svelte';
   import RecentProjects from './RecentProjects.svelte';
   import MIDIMonitor from './MIDIMonitor.svelte';
   import UserMenu from './UserMenu.svelte';
   import { engine, projectStore, transport, workspace } from '$lib/stores';
   import { formatBarsBeats, formatClock, PPQ_PRESETS, secondsToBeats } from '$lib/core/time';
   import { persistDawSession } from '$lib/persistence/daw-db';
-  import { renameCurrentSession, sessionGate } from '$lib/persistence/sessions.svelte';
+  import { confirmRenameDespiteDuplicate } from '$lib/persistence/session-duplicates';
+  import {
+    currentStudioSession,
+    isDuplicateSessionTitle,
+    renameCurrentSession,
+    sessionGate
+  } from '$lib/persistence/sessions.svelte';
+  import { documentStatus } from '$lib/persistence/documents.svelte';
 
   let editingTempo = $state(false);
   let tempoText = $state('');
@@ -43,8 +51,20 @@
     const next = nameText.trim();
     editingName = false;
     if (!next || next === projectStore.project.name) return;
-    projectStore.rename(next);
-    renameCurrentSession(next);
+    const except = currentStudioSession.record?.name;
+    if (isDuplicateSessionTitle(next, except)) {
+      if (!confirmRenameDespiteDuplicate(next, except)) {
+        nameText = projectStore.project.name;
+        return;
+      }
+    }
+    const saved = renameCurrentSession(next);
+    const finalName = saved?.name || next;
+    projectStore.rename(finalName);
+    if (saved && saved.name !== next) {
+      documentStatus.message = `“${next}” ya estaba en el historial; guardé esta sesión como “${saved.name}”.`;
+      documentStatus.tone = 'idle';
+    }
     void persistDawSession();
   }
 
@@ -315,7 +335,8 @@
 
   <div class="spacer"></div>
 
-  <div class="group">
+  <div class="group project-group">
+    <SongContextBadge variant="compact" />
     <RecentProjects />
     {#if editingName}
       <input
@@ -332,7 +353,11 @@
         title="Doble clic para cambiar el título de la sesión"
         ondblclick={startNameEdit}
       >
-        {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
+        {#if !(currentStudioSession.record?.musicId || currentStudioSession.record?.imageUrl)}
+          {projectStore.project.name}{projectStore.isDirty ? ' *' : ''}
+        {:else}
+          {projectStore.isDirty ? '● ' : ''}Sesión
+        {/if}
       </button>
     {/if}
     <UserMenu />
@@ -353,6 +378,49 @@
     border-bottom: 1px solid var(--stroke);
     flex: none;
     overflow: visible;
+  }
+
+  @media (max-width: 900px) {
+    .transport {
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      padding: 8px 10px;
+      min-height: 0;
+      row-gap: 8px;
+    }
+
+    .transport .divider-v,
+    .transport .spacer {
+      display: none;
+    }
+
+    .group {
+      gap: 4px;
+    }
+
+    .bars,
+    .time {
+      min-width: 0;
+    }
+
+    .time .readout-value {
+      font-size: 18px;
+    }
+
+    .transport :global(.icon-btn) {
+      width: 36px;
+      height: 36px;
+    }
+
+    .transport :global(.icon-btn.play) {
+      width: 42px;
+      height: 42px;
+    }
+
+    .project-name {
+      max-width: 42vw;
+      font-size: 12px;
+    }
   }
 
   .group {

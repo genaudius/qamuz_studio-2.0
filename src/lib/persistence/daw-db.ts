@@ -11,6 +11,7 @@ import { encodeProjectFile } from '$lib/core/serialize';
 import { sessionTrainingManifest } from './session-package';
 import { engine, projectStore, transport } from '$lib/stores';
 import {
+  currentStudioSession,
   ensureStudioSession,
   mergeIncomingSessions,
   type StudioSession,
@@ -26,6 +27,9 @@ export interface DawSessionRecord {
   title?: string;
   audioUrl?: string;
   mixNotes?: string;
+  musicId?: string;
+  imageUrl?: string;
+  audioFingerprint?: string;
   snapshot: {
     tempo: number;
     tracks: Array<{
@@ -40,6 +44,9 @@ export interface DawSessionRecord {
       role: string;
     }>;
     workLog?: StudioSession['workLog'];
+    musicId?: string;
+    imageUrl?: string;
+    audioFingerprint?: string;
   };
   updatedAt: string;
 }
@@ -51,6 +58,7 @@ const AUDIO_STORE = 'audio';
 const IDB_VERSION = 2;
 
 function snapshotFromProject(): DawSessionRecord['snapshot'] {
+  const current = currentStudioSession.record;
   return {
     tempo: transport.bpm,
     tracks: projectStore.project.tracks.map((track) => {
@@ -67,7 +75,10 @@ function snapshotFromProject(): DawSessionRecord['snapshot'] {
         role: stem.role
       };
     }),
-    workLog: currentStudioSession.record?.workLog
+    workLog: current?.workLog,
+    musicId: current?.musicId,
+    imageUrl: current?.imageUrl,
+    audioFingerprint: current?.audioFingerprint
   };
 }
 
@@ -80,6 +91,9 @@ function recordFromCurrent(): DawSessionRecord | null {
     title: current.title,
     audioUrl: current.audioUrl,
     mixNotes: current.mixNotes,
+    musicId: current.musicId,
+    imageUrl: current.imageUrl,
+    audioFingerprint: current.audioFingerprint,
     snapshot: snapshotFromProject(),
     updatedAt: new Date().toISOString()
   };
@@ -119,6 +133,14 @@ export async function persistDawSession(session?: StudioSession | null): Promise
     record.title = session.title ?? record.title;
     record.audioUrl = session.audioUrl ?? record.audioUrl;
     record.mixNotes = session.mixNotes ?? record.mixNotes;
+    record.musicId = session.musicId ?? record.musicId;
+    record.imageUrl = session.imageUrl ?? record.imageUrl;
+    record.audioFingerprint = session.audioFingerprint ?? record.audioFingerprint;
+    if (record.snapshot) {
+      record.snapshot.musicId = record.musicId;
+      record.snapshot.imageUrl = record.imageUrl;
+      record.snapshot.audioFingerprint = record.audioFingerprint;
+    }
   }
 
   await putLocal(record);
@@ -182,6 +204,14 @@ export async function hydrateDawSessionsFromCloud(): Promise<void> {
   const incoming: StudioSession[] = rows.map((row) => {
     const tracks = row.snapshot?.tracks as StudioTrackSnapshot[] | undefined;
     const workLog = row.snapshot?.workLog as StudioSession['workLog'] | undefined;
+    const snapMusicId =
+      typeof row.snapshot?.musicId === 'string' ? row.snapshot.musicId : row.musicId;
+    const snapImage =
+      typeof row.snapshot?.imageUrl === 'string' ? row.snapshot.imageUrl : row.imageUrl;
+    const snapFp =
+      typeof row.snapshot?.audioFingerprint === 'string'
+        ? row.snapshot.audioFingerprint
+        : row.audioFingerprint;
     return {
       name: row.name,
       idea: row.idea ?? '',
@@ -193,7 +223,10 @@ export async function hydrateDawSessionsFromCloud(): Promise<void> {
       mixNotes: row.mixNotes,
       tracks: Array.isArray(tracks) ? tracks : undefined,
       workLog: Array.isArray(workLog) ? workLog : undefined,
-      tempo: typeof row.snapshot?.tempo === 'number' ? row.snapshot.tempo : undefined
+      tempo: typeof row.snapshot?.tempo === 'number' ? row.snapshot.tempo : undefined,
+      musicId: snapMusicId,
+      imageUrl: snapImage,
+      audioFingerprint: snapFp
     };
   });
   mergeIncomingSessions(incoming);

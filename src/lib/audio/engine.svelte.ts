@@ -9,6 +9,7 @@
  */
 
 import { isNoteEvent } from '$lib/core/midi';
+import { channelProcessPayload, fxBusesPayload, makeChannelProcess } from '$lib/core/channel-fx';
 import { fromBeats, toBeats, toSampleRate } from '$lib/core/time';
 import type { Track } from '$lib/core/track';
 import type { ProjectStore } from '$lib/stores/project.svelte';
@@ -25,7 +26,8 @@ export class EngineController {
 
   /** Meter levels, refreshed on a timer so components can just read them. */
   meters = $state<Record<string, { peak: number; rms: number }>>({});
-  masterMeter = $state({ peak: 0, rms: 0 });
+  masterMeter = $state({ peak: 0, rms: 0, truePeak: 0 });
+  spectrum = $state<number[]>([]);
   isReady = $state(false);
   startupError = $state<string | null>(null);
 
@@ -78,6 +80,8 @@ export class EngineController {
           this.backend.setTrackPan(track.id, track.pan);
           this.backend.setTrackMute(track.id, !project.isAudible(track));
           this.backend.setTrackInstrument(track.id, trackInstrument(track));
+          const cp = track.channelProcess ?? makeChannelProcess();
+          this.backend.setTrackChannelProcess(track.id, channelProcessPayload(cp));
         }
 
         for (const instrument of instruments) {
@@ -87,6 +91,11 @@ export class EngineController {
           this.backend.setTrackPan(instrument.id, 0);
           this.backend.setTrackMute(instrument.id, instrument.isMuted);
           this.backend.setTrackInstrument(instrument.id, rackInstrumentSound(instrument));
+        }
+
+        const buses = project.project.fxBuses;
+        if (buses) {
+          this.backend.setFxBuses(fxBusesPayload(buses, this.#transport?.bpm ?? 120));
         }
 
         for (const id of this.#knownTracks) {
@@ -124,7 +133,9 @@ export class EngineController {
         next[instrument.id] = this.backend.meterLevel(instrument.id);
       }
       this.meters = next;
-      this.masterMeter = this.backend.masterMeterLevel();
+      const master = this.backend.masterMeterLevel();
+      this.masterMeter = { peak: master.peak, rms: master.rms, truePeak: master.truePeak ?? 0 };
+      this.spectrum = this.backend.latestSpectrum();
     }, 50);
   }
 

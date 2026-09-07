@@ -3,6 +3,8 @@
  * so existing songs carry over into Studio 2.0.
  */
 
+import { fingerprintsMatch } from '$lib/audio/audio-fingerprint';
+
 export type StudioTrackSnapshot = {
   name: string;
   type: string;
@@ -36,9 +38,14 @@ export type StudioSession = {
   tracks?: StudioTrackSnapshot[];
   workLog?: WorkEvent[];
   tempo?: number;
+  /** Linked Create Music track — badge + history identity. */
+  musicId?: string;
+  imageUrl?: string;
+  /** Compact audio fingerprint to avoid re-importing the same mix. */
+  audioFingerprint?: string;
 };
 
-export type GateView = 'home' | 'list' | 'idea' | 'name' | 'open';
+export type GateView = 'home' | 'list' | 'idea' | 'name' | 'open' | 'songs';
 
 const registryKey = 'qamuz.studio.sessions.v1';
 const currentKey = 'qamuz.studio.current';
@@ -99,7 +106,9 @@ export function makeBaseName(text: string): string {
 
 export function availableName(requested: string, musicIdea: string, existing = loadSessions()): string {
   const base = requested.trim() || makeBaseName(musicIdea);
-  if (!existing.some((item) => normalized(item.name) === normalized(base))) return base;
+  if (!existing.some((item) => normalized(item.name) === normalized(base) || normalized(item.title || '') === normalized(base))) {
+    return base;
+  }
   const genre = /merengue/i.test(musicIdea)
     ? 'merengue'
     : /salsa/i.test(musicIdea)
@@ -109,10 +118,55 @@ export function availableName(requested: string, musicIdea: string, existing = l
         : 'new';
   let proposal = `${base}-${genre}`;
   let index = 2;
-  while (existing.some((item) => normalized(item.name) === normalized(proposal))) {
+  while (
+    existing.some(
+      (item) =>
+        normalized(item.name) === normalized(proposal) ||
+        normalized(item.title || '') === normalized(proposal)
+    )
+  ) {
     proposal = `${base}-${genre}-${index++}`;
   }
   return proposal;
+}
+
+/** True when another session already uses this title/name (excluding one id/name). */
+export function isDuplicateSessionTitle(
+  title: string,
+  exceptName?: string,
+  existing = loadSessions()
+): boolean {
+  const key = normalized(title);
+  if (!key) return false;
+  return existing.some((item) => {
+    if (exceptName && normalized(item.name) === normalized(exceptName)) return false;
+    return normalized(item.name) === key || normalized(item.title || '') === key;
+  });
+}
+
+export function findSessionByMusicId(musicId: string, existing = loadSessions()): StudioSession | null {
+  if (!musicId) return null;
+  return existing.find((item) => item.musicId === musicId) ?? null;
+}
+
+export function findSessionByFingerprint(
+  fingerprint: string,
+  existing = loadSessions()
+): StudioSession | null {
+  if (!fingerprint) return null;
+  return (
+    existing.find((item) => fingerprintsMatch(item.audioFingerprint, fingerprint)) ?? null
+  );
+}
+
+export function findSessionByTitle(title: string, existing = loadSessions()): StudioSession | null {
+  const key = normalized(title);
+  if (!key) return null;
+  return (
+    existing.find(
+      (item) => normalized(item.name) === key || normalized(item.title || '') === key
+    ) ?? null
+  );
 }
 
 export class CurrentSessionStore {
@@ -168,13 +222,22 @@ export function renameCurrentSession(name: string): StudioSession | null {
       stage: 'imported'
     });
   }
-  const saved: StudioSession = { ...current, name: trimmed, title: trimmed, updatedAt: now };
+  // Keep a unique registry key when the display title collides; store the user's title.
+  const registryName = isDuplicateSessionTitle(trimmed, current.name)
+    ? availableName(trimmed, current.idea || trimmed)
+    : trimmed;
+  const saved: StudioSession = {
+    ...current,
+    name: registryName,
+    title: trimmed,
+    updatedAt: now
+  };
   const next = [
     saved,
     ...loadSessions().filter(
       (item) =>
         normalized(item.name) !== normalized(current.name) &&
-        normalized(item.name) !== normalized(trimmed)
+        normalized(item.name) !== normalized(registryName)
     )
   ];
   saveSessions(next);

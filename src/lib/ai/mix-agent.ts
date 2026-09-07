@@ -1,9 +1,15 @@
 /**
- * Maestro mix agent — gain/pan on the real DAW mixer.
- * Default is open and airy: never dump a loud, wide, autoplaying mix.
+ * Maestro mix agent — gain/pan + live channel EQ/comp/sends (Limbus-style intelligent mix).
+ * Recipes calibrated to role-based studio practice (vocal air, bass HPF, drum punch, etc.).
  */
 
 import { inferInstrument, trackChannelCount, trackLayoutLabel, type NamedStem } from '$lib/audio/stems';
+import {
+  defaultEqBands,
+  makeChannelProcess,
+  type ChannelProcess,
+  type EqBand
+} from '$lib/core/channel-fx';
 import { currentStudioSession, patchCurrentSession } from '$lib/persistence/sessions.svelte';
 import { persistDawSession } from '$lib/persistence/daw-db';
 import { projectStore, transport, workspace } from '$lib/stores';
@@ -16,6 +22,7 @@ export interface MixMove {
   volume: number;
   pan: number;
   note: string;
+  channelProcess?: ChannelProcess;
 }
 
 export interface MixReport {
@@ -43,23 +50,138 @@ export interface MixStyle {
   bass: number;
   drums: number;
   label: string;
+  /** Apply EQ/comp/sends (intelligent mix). */
+  process: boolean;
+}
+
+export type MixConfirmChoice = 'detect_tempo' | 'mix_current' | 'cancel';
+
+export interface MixConfirmState {
+  prompt: string;
+  bpm: number;
+  message: string;
+}
+
+/** Pending confirmation for Limbus-style “detect tempo / mix at BPM / cancel”. */
+let pendingMixConfirm: MixConfirmState | null = null;
+
+export function getPendingMixConfirm(): MixConfirmState | null {
+  return pendingMixConfirm;
+}
+
+export function clearPendingMixConfirm(): void {
+  pendingMixConfirm = null;
 }
 
 /** Lower, narrower defaults so the mix has air instead of sitting in the listener's face. */
 const ROLE_MIX: Record<string, { volume: number; pan: number; note: string }> = {
-  lead_vocal: { volume: 0.58, pan: 0, note: 'Voz al centro, un poco adelante pero con aire.' },
-  duet_vocal: { volume: 0.5, pan: -0.12, note: 'Dúo suave a la izquierda.' },
-  backing_vocal: { volume: 0.36, pan: 0.16, note: 'Coros atrás, sin empujar.' },
-  bass: { volume: 0.52, pan: 0, note: 'Bajo al centro, cuerpo sin tapar.' },
-  drums: { volume: 0.48, pan: 0, note: 'Kit al centro con headroom.' },
-  percussion: { volume: 0.38, pan: 0.14, note: 'Percusión ligera a la derecha.' },
-  lead_guitar: { volume: 0.44, pan: 0.18, note: 'Requinto abierto, no pegado.' },
-  rhythm_guitar: { volume: 0.4, pan: -0.16, note: 'Ritmo a la izquierda, hueco al centro.' },
-  keys: { volume: 0.42, pan: -0.08, note: 'Teclas suaves.' },
-  strings: { volume: 0.36, pan: 0.2, note: 'Cuerdas de apoyo.' },
-  brass: { volume: 0.38, pan: -0.14, note: 'Metales sin chocar con el lead.' },
-  unknown: { volume: 0.44, pan: 0, note: 'Nivel con aire; ajústalo si hace falta.' }
+  lead_vocal: { volume: 0.58, pan: 0, note: 'Voz al centro, EQ aire + comp suave.' },
+  duet_vocal: { volume: 0.5, pan: -0.12, note: 'Dúo con HPF y comp ligera.' },
+  backing_vocal: { volume: 0.36, pan: 0.16, note: 'Coros atrás, shelf agudo suave.' },
+  bass: { volume: 0.52, pan: 0, note: 'Bajo centrado; EQ suave @850 Hz + comp -18/3.' },
+  drums: { volume: 0.56, pan: 0, note: 'Kit protegido en transitorios; EQ/comp ligeros.' },
+  percussion: { volume: 0.4, pan: 0.14, note: 'Percusión lateral, poco reverb.' },
+  lead_guitar: { volume: 0.44, pan: 0.18, note: 'Lead abierto, presence 3–4 kHz.' },
+  rhythm_guitar: { volume: 0.4, pan: -0.16, note: 'Ritmo con corte de mud y delay corto.' },
+  keys: { volume: 0.42, pan: -0.08, note: 'Teclas suaves, reverb de sala.' },
+  strings: { volume: 0.36, pan: 0.2, note: 'Cuerdas de apoyo con hall.' },
+  brass: { volume: 0.38, pan: -0.14, note: 'Metales controlados en 2–3 kHz.' },
+  unknown: { volume: 0.44, pan: 0, note: 'Nivel con aire + EQ/comp base.' }
 };
+
+function band(type: EqBand['type'], freq: number, gainDb: number, q = 1): EqBand {
+  return { type, freq, gainDb, q, enabled: true };
+}
+
+/** Role recipes calibrated from Limbus AutoMix PROCESS reads (see mix-calibration.ts). */
+function processForRole(role: string, style: MixStyle): ChannelProcess {
+  const cp = makeChannelProcess();
+  if (!style.process) return cp;
+
+  const bands = defaultEqBands();
+  let sends = { reverb: 0.08, delay: 0.04 };
+  // Limbus default COMP template after AutoMix on BASS / general
+  let comp = {
+    enabled: true,
+    thresholdDb: -18,
+    ratio: 3,
+    attackMs: 10,
+    releaseMs: 100,
+    makeupDb: 0
+  };
+
+  if (role.includes('vocal')) {
+    bands[0] = band('lowshelf', 80, -2.5, 0.7);
+    bands[1] = band('peaking', 250, -1.2, 1.1);
+    bands[2] = band('peaking', 2800, 1.2, 1.2);
+    bands[3] = band('peaking', 5500, 1.8, 1);
+    bands[4] = band('highshelf', 12000, 1.2, 0.7);
+    comp = { enabled: true, thresholdDb: -16, ratio: 3.5, attackMs: 5, releaseMs: 60, makeupDb: 1 };
+    sends = { reverb: 0.18, delay: 0.12 };
+  } else if (role === 'bass') {
+    // Limbus BASS: B1@60/0, B2@850/+0.8, rest flat; COMP -18/3/10/100
+    bands[0] = band('lowshelf', 60, 0, 0.9);
+    bands[1] = band('peaking', 850, 0.8, 1);
+    bands[2] = band('peaking', 1000, 0, 1);
+    bands[3] = band('peaking', 4000, 0, 1);
+    bands[4] = band('highshelf', 12000, 0, 0.7);
+    comp = { enabled: true, thresholdDb: -18, ratio: 3, attackMs: 10, releaseMs: 100, makeupDb: 0 };
+    sends = { reverb: 0.02, delay: 0 };
+  } else if (role === 'drums') {
+    // Transient-protect: light punch, high thr (Limbus bombo: EQ off, thr 0)
+    bands[0] = band('lowshelf', 50, 0.8, 0.7);
+    bands[1] = band('peaking', 100, 1.5, 1);
+    bands[2] = band('peaking', 400, -1, 1.2);
+    bands[3] = band('peaking', 5000, 0.8, 1);
+    bands[4] = band('highshelf', 10000, 0.5, 0.7);
+    comp = { enabled: true, thresholdDb: -8, ratio: 4, attackMs: 5, releaseMs: 50, makeupDb: 0 };
+    sends = { reverb: 0.08, delay: 0.03 };
+  } else if (role === 'percussion') {
+    bands[0] = band('lowshelf', 120, -2, 0.7);
+    bands[1] = band('peaking', 400, -1, 1);
+    bands[2] = band('peaking', 2500, 1, 1);
+    bands[3] = band('peaking', 6000, 1.5, 1);
+    bands[4] = band('highshelf', 10000, 1, 0.7);
+    comp = { enabled: true, thresholdDb: -12, ratio: 3, attackMs: 5, releaseMs: 50, makeupDb: 0 };
+    sends = { reverb: 0.12, delay: 0.04 };
+  } else if (role.includes('guitar')) {
+    bands[0] = band('lowshelf', 90, -2, 0.7);
+    bands[1] = band('peaking', 300, -1.5, 1);
+    bands[2] = band('peaking', 1200, 0.5, 1);
+    bands[3] = band('peaking', 3500, 2, 1.1);
+    bands[4] = band('highshelf', 9000, 0.5, 0.7);
+    comp = { enabled: true, thresholdDb: -18, ratio: 3, attackMs: 10, releaseMs: 100, makeupDb: 0.5 };
+    sends = { reverb: 0.12, delay: role === 'lead_guitar' ? 0.16 : 0.08 };
+  } else if (role === 'keys' || role === 'strings') {
+    bands[0] = band('lowshelf', 100, -2, 0.7);
+    bands[1] = band('peaking', 400, -1, 1);
+    bands[2] = band('peaking', 2000, 0.5, 1);
+    bands[3] = band('peaking', 6000, 1, 1);
+    bands[4] = band('highshelf', 11000, 1.5, 0.7);
+    comp = { enabled: true, thresholdDb: -20, ratio: 2.5, attackMs: 10, releaseMs: 100, makeupDb: 0 };
+    sends = { reverb: 0.28, delay: 0.1 };
+  } else {
+    bands[0] = band('lowshelf', 70, -1, 0.7);
+    bands[3] = band('peaking', 4000, 0.8, 1);
+    bands[4] = band('highshelf', 10000, 0.5, 0.7);
+  }
+
+  // Style modulates send depth / vocal presence
+  if (style.label.includes('suave')) {
+    sends.reverb *= 1.15;
+    comp.ratio = Math.max(1.5, comp.ratio * 0.85);
+  }
+  if (style.label.includes('cerca') || /potente/.test(style.label)) {
+    sends.reverb *= 0.7;
+    comp.thresholdDb += 2;
+  }
+
+  cp.eq = { enabled: true, bands };
+  cp.comp = comp;
+  cp.sends = sends;
+  cp.preGainDb = 0;
+  return cp;
+}
 
 export function mixStyleFromPrompt(prompt = ''): MixStyle {
   const t = prompt.trim().toLowerCase();
@@ -69,8 +191,12 @@ export function mixStyleFromPrompt(prompt = ''): MixStyle {
     vocal: 1,
     bass: 1,
     drums: 1,
-    label: 'abierta y con aire'
+    label: 'abierta y con aire',
+    process: /eq|comp|proces|inteligente|mezcla|mix|master|efecto|banda/i.test(t) || t.length < 2
   };
+
+  // Default chip "Mezclar" enables process
+  if (!t || /mezclar|mezcla/.test(t)) style.process = true;
 
   if (/suave|aire|fluid|abierta|espacio|menos fuerte|no tan|sumerg|auditiv|tranquila/.test(t)) {
     style.headroom = 0.48;
@@ -98,6 +224,10 @@ export function mixStyleFromPrompt(prompt = ''): MixStyle {
     style.drums = 1.1;
     style.label += ', kit un poco más presente';
   }
+  if (/solo (nivel|volumen|fader)|sin (eq|comp|proceso)/.test(t)) {
+    style.process = false;
+    style.label += ', solo niveles';
+  }
   return style;
 }
 
@@ -114,15 +244,32 @@ function recipeFor(
   index: number,
   total: number,
   style: MixStyle
-): { volume: number; pan: number; note: string } {
+): { volume: number; pan: number; note: string; channelProcess: ChannelProcess } {
   const base = ROLE_MIX[stem.role] ?? ROLE_MIX.unknown;
   let pan = base.pan * style.spread;
-  if (stereo && Math.abs(pan) < 0.04 && stem.role !== 'lead_vocal' && stem.role !== 'bass' && stem.role !== 'drums') {
+  if (
+    stereo &&
+    Math.abs(pan) < 0.04 &&
+    stem.role !== 'lead_vocal' &&
+    stem.role !== 'bass' &&
+    stem.role !== 'drums'
+  ) {
     const spread = total <= 1 ? 0 : (index / Math.max(1, total - 1)) * 0.36 - 0.18;
     pan = spread * style.spread;
   }
-  const volume = Math.min(0.78, Math.max(0.18, base.volume * roleGain(stem.role, style) * style.headroom));
-  return { volume, pan: Math.max(-0.42, Math.min(0.42, pan)), note: base.note };
+  const volume = Math.min(
+    0.78,
+    Math.max(0.18, base.volume * roleGain(stem.role, style) * style.headroom)
+  );
+  // Transient protect (Limbus): kick/drums keep a higher floor — peak ≠ loudness
+  const floored =
+    stem.role === 'drums' ? Math.max(volume, 0.5 * style.headroom + 0.12) : volume;
+  return {
+    volume: Math.min(0.78, floored),
+    pan: Math.max(-0.42, Math.min(0.42, pan)),
+    note: base.note,
+    channelProcess: processForRole(stem.role, style)
+  };
 }
 
 export function sessionSnapshot(): SessionTrackSnapshot[] {
@@ -171,18 +318,84 @@ Pistas:
 ${lines}
 
 Eres Maestro dentro de QAMUZ Studio. Hablas en español, corto y claro. Ya conoces la pista y la región seleccionadas: úsalas cuando digan “esto”, “el track”, “esta pista” o “aquí”.
-Si piden borrar un track, NO lo borres tú: el DAW pide confirmación con el nombre (“¿Estás seguro de que quieres borrar el track del bajo?”).
-No impones play, mezcla, master ni export.
-Mezclas con aire (ganancia y paneo reales). No satures ni abras el paneo al máximo.
-EQ/comp/reverb de canal se hacen en QAMUZ MASTER PRO cuando te lo pidan.
+Si piden borrar un track, NO lo borres tú: el DAW pide confirmación con el nombre.
+Mezclas inteligentes: niveles, paneo, EQ de 5 bandas, compresión y envíos REV/DLY en vivo.
+MASTER PRO es para la entrega offline final.
 Si pide cambiar una frase, necesita una región seleccionada en la pista.`;
+}
+
+/**
+ * Start mix flow with tempo confirmation (Limbus Assistant pattern).
+ * Returns a confirm payload when waiting; otherwise runs the mix.
+ */
+export function requestMixSession(options?: {
+  headroom?: number;
+  prompt?: string;
+  openMixer?: boolean;
+  skipConfirm?: boolean;
+}): MixReport | { confirm: MixConfirmState } {
+  const prompt = options?.prompt ?? '';
+  const tracksWithAudio = projectStore.project.tracks.filter(
+    (track) => track.clips.length > 0 || track.type === 'instrument' || track.type === 'audio'
+  );
+  const hasSignal = tracksWithAudio.some(
+    (t) => t.clips.length > 0 || t.type === 'instrument'
+  );
+
+  if (!options?.skipConfirm) {
+    pendingMixConfirm = {
+      prompt,
+      bpm: transport.bpm,
+      message: `El proyecto está a ${transport.bpm} BPM. Puedes detectar el tempo antes de mezclar, mezclar con ${transport.bpm} BPM o cancelar.`
+    };
+    return { confirm: pendingMixConfirm };
+  }
+
+  if (!hasSignal) {
+    return {
+      moves: [],
+      summary:
+        'No encuentro pistas de audio para hacer una mezcla con criterio. Importa stems o genera material y vuelve a pedirlo.',
+      styleLabel: '—'
+    };
+  }
+
+  return mixSession({ ...options, skipConfirm: true });
+}
+
+export function confirmMixSession(choice: MixConfirmChoice): MixReport | { status: string } {
+  const pending = pendingMixConfirm;
+  clearPendingMixConfirm();
+  if (!pending || choice === 'cancel') {
+    return { status: 'cancelado' };
+  }
+  if (choice === 'detect_tempo') {
+    // Detection runs async from UI; after BPM update they call mix_current.
+    return {
+      status: `Detectar tempo solo analiza BPM y luego pedirá confirmación aparte. Tempo actual: ${transport.bpm}.`
+    };
+  }
+  return mixSession({ prompt: pending.prompt, openMixer: true, skipConfirm: true });
 }
 
 export function mixSession(options?: {
   headroom?: number;
   prompt?: string;
   openMixer?: boolean;
+  skipConfirm?: boolean;
 }): MixReport {
+  if (!options?.skipConfirm) {
+    const gate = requestMixSession(options);
+    if ('confirm' in gate) {
+      return {
+        moves: [],
+        summary: gate.confirm.message,
+        styleLabel: 'pendiente'
+      };
+    }
+    return gate;
+  }
+
   const style = mixStyleFromPrompt(options?.prompt ?? '');
   if (typeof options?.headroom === 'number') {
     style.headroom = Math.max(0.2, Math.min(1, options.headroom));
@@ -201,16 +414,31 @@ export function mixSession(options?: {
       layout: trackLayoutLabel(track),
       volume: recipe.volume,
       pan: recipe.pan,
-      note: recipe.note
+      note: recipe.note,
+      channelProcess: recipe.channelProcess
     };
   });
 
-  projectStore.applyMixMoves(moves.map((move) => ({ id: move.trackId, volume: move.volume, pan: move.pan })));
-  if (options?.openMixer) workspace.open('mixer');
+  projectStore.applyMixMoves(
+    moves.map((move) => ({
+      id: move.trackId,
+      volume: move.volume,
+      pan: move.pan,
+      channelProcess: move.channelProcess
+    }))
+  );
+  if (options?.openMixer) {
+    workspace.open('mixer');
+    projectStore.bottomPanel = 'mixer';
+  }
 
   const names = moves.map((move) => move.name);
+  const fxNote = style.process ? ' con EQ, compresión y envíos' : '';
+  const drumProtect = moves.some((m) => m.role === 'drums')
+    ? ' Protegí kicks/drums de bajadas globales (criterio transitorios).'
+    : '';
   const summary = moves.length
-    ? `Listo. Mezclé “${currentStudioSession.record?.name || projectStore.project.name}” ${style.label}: ${names.join(', ')}. No la puse a sonar sola — dale play cuando quieras, o dime qué subir, bajar o dejar como está.`
+    ? `Listo. Mezcla inteligente${fxNote} en “${currentStudioSession.record?.name || projectStore.project.name}” (${style.label}): ${names.join(', ')}.${drumProtect} No la puse a sonar sola — dale play cuando quieras.`
     : 'No hay pistas para mezclar todavía. Importa stems o extrae la canción y luego dime cómo la quieres.';
 
   patchCurrentSession({
@@ -227,6 +455,9 @@ export function describeSession(): string {
   const tracks = sessionSnapshot();
   if (!tracks.length) return 'La sesión no tiene pistas todavía.';
   return tracks
-    .map((track) => `${track.name} · ${track.layout} · ${track.clips} clip${track.clips === 1 ? '' : 's'}`)
+    .map(
+      (track) =>
+        `${track.name} · ${track.layout} · ${track.clips} clip${track.clips === 1 ? '' : 's'}`
+    )
     .join('\n');
 }

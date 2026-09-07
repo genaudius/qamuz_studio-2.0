@@ -1,132 +1,72 @@
 <script lang="ts">
   /**
-   * Left rail: the Studio flow, from session to delivery.
+   * Left rail (desktop) / Más drawer (mobile).
    */
 
   import Icon from './Icon.svelte';
-  import { goHome } from '$lib/saas';
-  import { saveProject, openSessionFinder } from '$lib/persistence/documents.svelte';
-  import { sessionGate } from '$lib/persistence/sessions.svelte';
-  import { chooseSessionFiles } from '$lib/audio/import-session';
-  import { projectStore, workspace, type StudioModule } from '$lib/stores';
+  import {
+    isStudioNavActive,
+    runStudioNav,
+    studioNavSections,
+    type StudioNavItem
+  } from '$lib/studio-nav';
+  import { projectStore, workspace } from '$lib/stores';
   import { studioHelp } from '$lib/stores/help.svelte';
 
-  interface Item {
-    id: StudioModule | 'home' | 'new' | 'open' | 'save' | 'inspector' | 'audio' | 'import' | 'help';
-    label: string;
-    icon: 'home' | 'file-plus' | 'folder' | 'save' | 'layout' | 'sparkles' | 'mixer' | 'pianoroll' | 'keyboard' | 'disc' | 'download' | 'gear' | 'inspector' | 'waveform' | 'help';
-    module?: StudioModule;
-  }
-
-  const sections: { title: string; items: Item[] }[] = [
-    {
-      title: 'Sesión',
-      items: [
-        { id: 'home', label: 'Home', icon: 'home' },
-        { id: 'new', label: 'Nuevo', icon: 'file-plus' },
-        { id: 'open', label: 'Abrir', icon: 'folder' },
-        { id: 'save', label: 'Guardar', icon: 'save' }
-      ]
-    },
-    {
-      title: 'Crear',
-      items: [
-        { id: 'arrange', label: 'Arrange', icon: 'layout', module: 'arrange' },
-        { id: 'import', label: 'Importar stems', icon: 'waveform' },
-        { id: 'maestro', label: 'Maestro', icon: 'sparkles', module: 'maestro' },
-        { id: 'inspector', label: 'Inspector', icon: 'inspector' },
-        { id: 'audio', label: 'Audio / MIDI', icon: 'waveform' }
-      ]
-    },
-    {
-      title: 'Mezcla',
-      items: [
-        { id: 'mixer', label: 'Mixer', icon: 'mixer', module: 'mixer' },
-        { id: 'pianoRoll', label: 'Piano', icon: 'pianoroll', module: 'pianoRoll' },
-        { id: 'vrack', label: 'V-Rack', icon: 'keyboard', module: 'vrack' }
-      ]
-    },
-    {
-      title: 'Entrega',
-      items: [
-        { id: 'mastering', label: 'MASTER PRO', icon: 'disc', module: 'mastering' },
-        { id: 'export', label: 'Export', icon: 'download', module: 'export' }
-      ]
-    }
-  ];
-
-  function isActive(item: Item): boolean {
-    if (item.id === 'inspector') return projectStore.showInspector && workspace.showsArrange;
-    if (item.id === 'audio') return workspace.module === 'settings';
-    if (item.id === 'import') return false;
-    return Boolean(item.module && workspace.module === item.module);
-  }
-
-  async function run(item: Item) {
-    if (item.id === 'home') {
-      void goHome();
-      return;
-    }
-    if (item.id === 'new') {
-      sessionGate.open('idea');
-      return;
-    }
-    if (item.id === 'open') {
-      await openSessionFinder();
-      return;
-    }
-    if (item.id === 'save') {
-      await saveProject();
-      return;
-    }
-    if (item.id === 'inspector') {
-      workspace.open('arrange');
-      projectStore.showInspector = !projectStore.showInspector;
-      return;
-    }
-    if (item.id === 'import') {
-      workspace.open('arrange');
-      await chooseSessionFiles();
-      return;
-    }
-    if (item.id === 'audio') {
-      workspace.open('settings');
-      return;
-    }
-    if (item.id === 'help') {
-      studioHelp.toggle();
-      return;
-    }
-    if (item.module) workspace.open(item.module);
+  async function run(item: StudioNavItem) {
+    await runStudioNav(item);
   }
 </script>
 
-<nav class="rail" class:wide={workspace.sidebarExpanded} aria-label="Studio">
+{#if workspace.mobileMenuOpen}
+  <button
+    type="button"
+    class="scrim"
+    aria-label="Cerrar menú"
+    onclick={() => workspace.closeMobileMenu()}
+  ></button>
+{/if}
+
+<nav
+  class="rail"
+  class:wide={workspace.sidebarExpanded || workspace.mobileMenuOpen}
+  class:drawer={workspace.mobileMenuOpen}
+  aria-label="Studio"
+>
   <div class="brand-row">
     <button class="brand" title="QAMUZ Studio" onclick={() => workspace.toggleSidebar()}>
       <span class="mark">Q</span>
-      {#if workspace.sidebarExpanded}
+      {#if workspace.sidebarExpanded || workspace.mobileMenuOpen}
         <span class="brand-name">Studio</span>
       {/if}
     </button>
-    <button class="hide" title="Ocultar menú" onclick={() => workspace.hideSidebar()}>
-      <Icon name="chevron-left" size={13} />
-      {#if workspace.sidebarExpanded}<span>Ocultar</span>{/if}
+    <button
+      class="hide"
+      title={workspace.mobileMenuOpen ? 'Cerrar' : 'Ocultar menú'}
+      onclick={() => {
+        if (workspace.mobileMenuOpen) workspace.closeMobileMenu();
+        else workspace.hideSidebar();
+      }}
+    >
+      <Icon name={workspace.mobileMenuOpen ? 'close' : 'chevron-left'} size={13} />
+      {#if workspace.sidebarExpanded || workspace.mobileMenuOpen}
+        <span>{workspace.mobileMenuOpen ? 'Cerrar' : 'Ocultar'}</span>
+      {/if}
     </button>
   </div>
 
-  {#each sections as section}
-    <p class="section">{#if workspace.sidebarExpanded}{section.title}{/if}</p>
+  {#each studioNavSections as section}
+    <p class="section">{#if workspace.sidebarExpanded || workspace.mobileMenuOpen}{section.title}{/if}</p>
     {#each section.items as item}
       <button
         class="item"
-        class:active={isActive(item)}
+        class:active={isStudioNavActive(item)}
         class:dirty={item.id === 'save' && projectStore.isDirty}
         title={item.label}
         onclick={() => void run(item)}
       >
         <Icon name={item.icon} size={15} />
-        {#if workspace.sidebarExpanded}
+        {#if workspace.sidebarExpanded || workspace.mobileMenuOpen}
           <span>{item.label}</span>
         {/if}
       </button>
@@ -139,10 +79,13 @@
     class="item"
     class:active={studioHelp.open}
     title="Ayuda (F1)"
-    onclick={() => studioHelp.toggle()}
+    onclick={() => {
+      workspace.closeMobileMenu();
+      studioHelp.toggle();
+    }}
   >
     <Icon name="help" size={15} />
-    {#if workspace.sidebarExpanded}
+    {#if workspace.sidebarExpanded || workspace.mobileMenuOpen}
       <span>Ayuda</span>
     {/if}
   </button>
@@ -151,16 +94,23 @@
     class="item"
     class:active={workspace.module === 'settings'}
     title="Ajustes"
-    onclick={() => workspace.open('settings')}
+    onclick={() => {
+      workspace.closeMobileMenu();
+      workspace.open('settings');
+    }}
   >
     <Icon name="gear" size={15} />
-    {#if workspace.sidebarExpanded}
+    {#if workspace.sidebarExpanded || workspace.mobileMenuOpen}
       <span>Ajustes</span>
     {/if}
   </button>
 </nav>
 
 <style>
+  .scrim {
+    display: none;
+  }
+
   .rail {
     display: flex;
     flex-direction: column;
@@ -267,5 +217,36 @@
 
   .flex {
     flex: 1;
+  }
+
+  @media (max-width: 900px) {
+    .rail {
+      display: none;
+    }
+
+    .scrim {
+      display: block;
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      background: rgba(0, 0, 0, 0.55);
+      border: none;
+      padding: 0;
+    }
+
+    .rail.drawer {
+      display: flex;
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 85;
+      width: min(86vw, 300px);
+      max-width: 300px;
+      border-right: 1px solid var(--stroke);
+      box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
+      overflow-y: auto;
+      padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    }
   }
 </style>

@@ -6,8 +6,10 @@
 
   import { onMount } from 'svelte';
   import AIPanel from '$lib/components/AIPanel.svelte';
+  import AnalysisPanel from '$lib/components/AnalysisPanel.svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import ArrangeView from '$lib/components/ArrangeView.svelte';
+  import ChannelStripPanel from '$lib/components/ChannelStripPanel.svelte';
   import ExportPanel from '$lib/components/ExportPanel.svelte';
   import GenerateDialog from '$lib/components/GenerateDialog.svelte';
   import HelpOverlay from '$lib/components/HelpOverlay.svelte';
@@ -15,6 +17,7 @@
   import Inspector from '$lib/components/Inspector.svelte';
   import MasteringPanel from '$lib/components/MasteringPanel.svelte';
   import MixerPanel from '$lib/components/MixerPanel.svelte';
+  import MobileStudioNav from '$lib/components/MobileStudioNav.svelte';
   import PianoRoll from '$lib/components/PianoRoll.svelte';
   import Resizer from '$lib/components/Resizer.svelte';
   import SaveDialog from '$lib/components/SaveDialog.svelte';
@@ -23,6 +26,7 @@
   import StatusBar from '$lib/components/StatusBar.svelte';
   import TransportBar from '$lib/components/TransportBar.svelte';
   import WorkOverlay from '$lib/components/WorkOverlay.svelte';
+  import VRackPanel from '$lib/components/VRackPanel.svelte';
   import { listenForAccount } from '$lib/account.svelte';
   import { importAudioFromUrl } from '$lib/audio/import';
   import { openMixSessionFromSong, openStemSessionFromSong } from '$lib/audio/open-stems-session';
@@ -139,6 +143,26 @@
     const stopAutosave = startAutosave();
     const stopAccount = listenForAccount();
 
+    const mobileQuery = window.matchMedia('(max-width: 900px)');
+    const applyMobileShell = () => {
+      if (mobileQuery.matches) {
+        // Desktop rail hidden; MobileStudioNav + Más drawer replace it.
+        workspace.hideSidebar();
+        workspace.closeMobileMenu();
+        projectStore.showInspector = false;
+        projectStore.showAI = false;
+        projectStore.showVRack = false;
+        if (projectStore.bottomPanelHeight > 220) {
+          projectStore.bottomPanelHeight = 160;
+        }
+      } else {
+        workspace.showSidebar();
+        workspace.closeMobileMenu();
+      }
+    };
+    applyMobileShell();
+    mobileQuery.addEventListener('change', applyMobileShell);
+
     void (async () => {
       try {
         await initApp();
@@ -148,7 +172,9 @@
         const launch = readStudioLaunch();
         if (launch.musicId) {
           newProject({ force: true });
-          projectStore.showAI = true;
+          // Song/stems launch → arrange first; Maestro stays closed so it can't hide the editor.
+          projectStore.showAI = false;
+          workspace.open('arrange');
           try {
             const payload = {
               musicId: launch.musicId,
@@ -156,7 +182,9 @@
               idea: launch.idea,
               genre: launch.genre,
               instrumental: launch.instrumental,
-              bpm: launch.bpm
+              bpm: launch.bpm,
+              imageUrl: launch.imageUrl || undefined,
+              forceNew: launch.forceNew
             };
             if (launch.extractStems) {
               await openStemSessionFromSong(payload);
@@ -166,7 +194,13 @@
           } catch (error) {
             console.warn(error);
             workProgress.fail((error as Error).message);
-            sessionGate.open();
+            // Don't trap the user on the gate — open the mix so they can work.
+            try {
+              await openMixSessionFromSong(payload);
+            } catch (mixError) {
+              console.warn(mixError);
+              sessionGate.open('songs');
+            }
           }
         } else if (launch.session || launch.idea) {
           await openMaestroSession(
@@ -180,7 +214,7 @@
             launch.autoPlan
           );
         } else {
-          sessionGate.open();
+          sessionGate.open('songs');
         }
         await refreshRecentProjects();
       } finally {
@@ -189,6 +223,7 @@
     })();
 
     return () => {
+      mobileQuery.removeEventListener('change', applyMobileShell);
       stopAccount();
       stopAutosave();
       engine.dispose();
@@ -327,13 +362,17 @@
 <svelte:window onkeydown={onKeyDown} onbeforeunload={onBeforeUnload} />
 
 <div class="shell">
-  {#if !workspace.sidebarHidden}
+  {#if !workspace.sidebarHidden || workspace.mobileMenuOpen}
     <AppSidebar />
   {/if}
 
   <div class="stage">
-    {#if workspace.sidebarHidden}
-      <button class="show-rail" title="Mostrar menú" onclick={() => workspace.showSidebar()}>
+    {#if workspace.sidebarHidden && !workspace.mobileMenuOpen}
+      <button
+        class="show-rail desktop-only"
+        title="Mostrar menú"
+        onclick={() => workspace.showSidebar()}
+      >
         <Icon name="chevron-right" size={14} />
         <span>Menú</span>
       </button>
@@ -365,6 +404,8 @@
           </div>
         {:else if workspace.module === 'mastering'}
           <MasteringPanel />
+        {:else if workspace.module === 'analysis'}
+          <AnalysisPanel />
         {:else}
           <ArrangeView />
 
@@ -387,6 +428,25 @@
           {/if}
         {/if}
       </div>
+
+      {#if workspace.channelStripTrackId && workspace.showsArrange}
+        {@const stripTrack = projectStore.project.tracks.find(
+          (t) => t.id === workspace.channelStripTrackId
+        )}
+        {#if stripTrack}
+          <Resizer
+            orientation="horizontal"
+            size={360}
+            min={280}
+            max={520}
+            invert
+            onResize={() => {}}
+          />
+          <div class="side" style:width="360px">
+            <ChannelStripPanel track={stripTrack} onClose={() => workspace.closeChannelStrip()} />
+          </div>
+        {/if}
+      {/if}
 
       {#if projectStore.showInspector && workspace.showsArrange}
         <Resizer
@@ -420,11 +480,12 @@
     <StatusBar {booting} />
     <WorkOverlay />
     <HelpOverlay />
-    {#if sessionGate.visible && workspace.module !== 'settings' && workspace.module !== 'export' && workspace.module !== 'mastering'}
+    {#if sessionGate.visible && workspace.module !== 'settings' && workspace.module !== 'export' && workspace.module !== 'mastering' && workspace.module !== 'analysis'}
       <SessionGate onOpen={openMaestroSession} />
     {/if}
   </div>
 </div>
+<MobileStudioNav />
 <GenerateDialog />
 <SaveDialog />
 
@@ -511,5 +572,43 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  @media (max-width: 900px) {
+    .shell {
+      flex-direction: column;
+    }
+
+    .body {
+      flex-direction: column;
+    }
+
+    .side {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      width: 100% !important;
+      max-width: none;
+      border-left: none;
+      box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
+    }
+
+    .desktop-only {
+      display: none;
+    }
+
+    .stage {
+      padding-bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .bottom {
+      max-height: 42vh;
+    }
+
+    :global(:root) {
+      --track-header-width: 120px;
+      --track-height: 58px;
+      --ruler-height: 26px;
+    }
   }
 </style>

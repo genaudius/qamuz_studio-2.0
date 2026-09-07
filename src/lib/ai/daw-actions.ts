@@ -20,7 +20,7 @@ import { generateMIDI } from './claude';
 import { isElevenLabsConfigured } from './config';
 import { runAudioFill, runMIDIFill } from './fill';
 import { lastRenderAudioUrl, generateWithMaestro, interpretIdea, type MaestroPlan } from './maestro';
-import { describeSession, mixSession } from './mix-agent';
+import { describeSession, mixSession, requestMixSession, confirmMixSession } from './mix-agent';
 import { describeGroove, localPartForSound, transposeNotes } from './local-midi';
 import { trackIsEmpty } from './session-inventory';
 import {
@@ -45,6 +45,7 @@ import type { GeneratedMIDINote } from './types';
 export interface DawActionResult {
   ok: boolean;
   message: string;
+  data?: Record<string, unknown>;
 }
 
 function findTrack(name: string) {
@@ -252,12 +253,35 @@ export async function executeDawAction(
       }
       case 'mix_session': {
         const prompt = String(args.prompt ?? '');
-        const report = mixSession({
-          prompt,
-          openMixer: /\bmixer\b/.test(prompt.toLowerCase())
-        });
+        const skipConfirm = Boolean(args.skip_confirm);
+        if (skipConfirm) {
+          const report = mixSession({
+            prompt,
+            openMixer: true,
+            skipConfirm: true
+          });
+          void persistDawSession();
+          return { ok: true, message: report.summary };
+        }
+        const gate = requestMixSession({ prompt, openMixer: true });
+        if ('confirm' in gate) {
+          return {
+            ok: true,
+            message: gate.confirm.message,
+            data: { mixConfirm: gate.confirm }
+          };
+        }
         void persistDawSession();
-        return { ok: true, message: report.summary };
+        return { ok: true, message: gate.summary };
+      }
+      case 'confirm_mix': {
+        const choice = String(args.choice ?? 'cancel') as 'detect_tempo' | 'mix_current' | 'cancel';
+        const result = confirmMixSession(choice);
+        if ('summary' in result) {
+          void persistDawSession();
+          return { ok: true, message: result.summary };
+        }
+        return { ok: true, message: result.status };
       }
       case 'describe_session':
         return { ok: true, message: describeSession() };
@@ -302,6 +326,9 @@ export async function executeDawAction(
       case 'show_mastering':
         workspace.open('mastering');
         return { ok: true, message: 'Master abierto.' };
+      case 'show_analysis':
+        workspace.open('analysis');
+        return { ok: true, message: 'Analysis abierto.' };
       case 'open_module':
         workspace.open(String(args.module ?? 'arrange') as StudioModule);
         return { ok: true, message: `Módulo ${workspace.module}.` };
@@ -532,7 +559,7 @@ function writePart(args: Record<string, unknown>): DawActionResult {
     );
   }
 
-  const form = applyFormMarkers(length);
+  applyFormMarkers(length);
   patchSketch({ durationBeats: length, durationMinutes: length / Math.max(1, transport.bpm), bpm: transport.bpm });
   engine.rebuildSchedule();
   workspace.open('arrange');
@@ -655,6 +682,7 @@ export function inferDawAction(text: string): { name: string; args: Record<strin
   if (/\b(abre(r)? )?(el )?mixer\b/.test(t) && t.length < 48) return { name: 'show_mixer', args: {} };
   if (/\b(piano[\s-]?roll|abre(r)? el piano)\b/.test(t) && t.length < 48) return { name: 'show_piano_roll', args: {} };
   if (/\b(master|masteriz)/.test(t) && t.length < 48) return { name: 'show_mastering', args: {} };
+  if (/\b(analy|espectro|lufs|medidor)/.test(t) && t.length < 48) return { name: 'show_analysis', args: {} };
 
   const add = t.match(
     /\b(?:añade\w*|anade\w*|agrega\w*|agr[eé]gale|pon\w*|p[oó]ngale|genera\w*|crea\w*)\b.{0,48}\b(piano|bajo|bass|guitarra|requinto|segunda|bongo|bongos|cuerdas|violines|metales|synth|bater[ií]a|drums|tambora|g[uü]ira)\b/

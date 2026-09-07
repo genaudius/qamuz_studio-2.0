@@ -16,6 +16,16 @@
  */
 
 import type { AutomationLane, AutomationParameter, AutomationPoint } from './automation';
+import {
+  defaultEqBands,
+  makeChannelProcess,
+  makeFxBuses,
+  type ChannelProcess,
+  type EqBand,
+  type FxBuses,
+  type InsertKind,
+  type InsertSlot
+} from './channel-fx';
 import type {
   AudioClipData,
   AudioFileReference,
@@ -603,6 +613,120 @@ function decodeMIDIOutput(value: unknown, field: string): MIDIOutputDestination 
   }
 }
 
+// --- channel FX -------------------------------------------------------------
+
+function encodeChannelProcess(cp: ChannelProcess): Json {
+  return {
+    preGainDb: cp.preGainDb,
+    phaseInvert: cp.phaseInvert,
+    eq: {
+      enabled: cp.eq.enabled,
+      bands: cp.eq.bands.map((b) => ({
+        type: b.type,
+        freq: b.freq,
+        gainDb: b.gainDb,
+        q: b.q,
+        enabled: b.enabled
+      }))
+    },
+    comp: { ...cp.comp },
+    inserts: cp.inserts.map((i) => ({
+      id: i.id,
+      kind: i.kind,
+      enabled: i.enabled,
+      params: i.params
+    })),
+    sends: { ...cp.sends }
+  };
+}
+
+function decodeEqBand(value: unknown, field: string): EqBand {
+  const o = obj(value, field);
+  return {
+    type: (o.type as EqBand['type']) ?? 'peaking',
+    freq: num(o.freq, `${field}.freq`, 1000),
+    gainDb: num(o.gainDb, `${field}.gainDb`, 0),
+    q: num(o.q, `${field}.q`, 1),
+    enabled: bool(o.enabled, true)
+  };
+}
+
+function decodeInsert(value: unknown, field: string): InsertSlot {
+  const o = obj(value, field);
+  const params: Record<string, number> = {};
+  const raw = o.params && typeof o.params === 'object' ? (o.params as Json) : {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'number') params[k] = v;
+  }
+  return {
+    id: typeof o.id === 'string' ? o.id : uuidForFile(crypto.randomUUID?.() ?? `${Date.now()}`),
+    kind: (o.kind as InsertKind) ?? 'drive',
+    enabled: bool(o.enabled, true),
+    params
+  };
+}
+
+function decodeChannelProcess(value: unknown, field: string): ChannelProcess {
+  if (!value || typeof value !== 'object') return makeChannelProcess();
+  const o = obj(value, field);
+  const eqObj = o.eq ? obj(o.eq, `${field}.eq`) : {};
+  const compObj = o.comp ? obj(o.comp, `${field}.comp`) : {};
+  const sendsObj = o.sends ? obj(o.sends, `${field}.sends`) : {};
+  const bands = arr(eqObj.bands).map((b, i) => decodeEqBand(b, `${field}.eq.bands[${i}]`));
+  return {
+    preGainDb: num(o.preGainDb, `${field}.preGainDb`, 0),
+    phaseInvert: bool(o.phaseInvert, false),
+    eq: {
+      enabled: bool(eqObj.enabled, false),
+      bands: bands.length ? bands : defaultEqBands()
+    },
+    comp: {
+      enabled: bool(compObj.enabled, false),
+      thresholdDb: num(compObj.thresholdDb, `${field}.comp.thresholdDb`, -18),
+      ratio: num(compObj.ratio, `${field}.comp.ratio`, 4),
+      attackMs: num(compObj.attackMs, `${field}.comp.attackMs`, 5),
+      releaseMs: num(compObj.releaseMs, `${field}.comp.releaseMs`, 50),
+      makeupDb: num(compObj.makeupDb, `${field}.comp.makeupDb`, 0)
+    },
+    inserts: arr(o.inserts).map((i, idx) => decodeInsert(i, `${field}.inserts[${idx}]`)),
+    sends: {
+      reverb: num(sendsObj.reverb, `${field}.sends.reverb`, 0),
+      delay: num(sendsObj.delay, `${field}.sends.delay`, 0)
+    }
+  };
+}
+
+function encodeFxBuses(buses: FxBuses): Json {
+  return {
+    reverb: { ...buses.reverb },
+    delay: { ...buses.delay }
+  };
+}
+
+function decodeFxBuses(value: unknown, field: string): FxBuses {
+  const fallback = makeFxBuses();
+  if (!value || typeof value !== 'object') return fallback;
+  const o = obj(value, field);
+  const rev = o.reverb ? obj(o.reverb, `${field}.reverb`) : {};
+  const dly = o.delay ? obj(o.delay, `${field}.delay`) : {};
+  return {
+    reverb: {
+      enabled: bool(rev.enabled, true),
+      algorithm: (rev.algorithm as FxBuses['reverb']['algorithm']) ?? 'hall',
+      size: num(rev.size, `${field}.reverb.size`, 0.55),
+      decay: num(rev.decay, `${field}.reverb.decay`, 0.5),
+      precut: num(rev.precut, `${field}.reverb.precut`, 0.35),
+      busVolDb: num(rev.busVolDb, `${field}.reverb.busVolDb`, -6)
+    },
+    delay: {
+      enabled: bool(dly.enabled, true),
+      syncBeats: num(dly.syncBeats, `${field}.delay.syncBeats`, 0.25),
+      feedback: num(dly.feedback, `${field}.delay.feedback`, 0.35),
+      busVolDb: num(dly.busVolDb, `${field}.delay.busVolDb`, -8)
+    }
+  };
+}
+
 // --- tracks -----------------------------------------------------------------
 
 function encodeTrack(t: Track): Json {
@@ -622,6 +746,7 @@ function encodeTrack(t: Track): Json {
     instrumentSlot: t.instrumentSlot ? encodePluginSlot(t.instrumentSlot) : undefined,
     midiOutput: t.midiOutput ? encodeMIDIOutput(t.midiOutput) : undefined,
     pluginSlots: t.pluginSlots.map(encodePluginSlot),
+    channelProcess: encodeChannelProcess(t.channelProcess ?? makeChannelProcess()),
     automationLanes: t.automationLanes.map(encodeAutomationLane),
     isAutomationVisible: t.isAutomationVisible,
     height: t.height,
@@ -655,6 +780,7 @@ function decodeTrack(value: unknown, field: string, sampleRate: number): Track {
     pluginSlots: arr(o.pluginSlots).map((s, i) =>
       decodePluginSlot(s, `${field}.pluginSlots[${i}]`)
     ),
+    channelProcess: decodeChannelProcess(o.channelProcess, `${field}.channelProcess`),
     automationLanes: arr(o.automationLanes).map((l, i) =>
       decodeAutomationLane(l, `${field}.automationLanes[${i}]`)
     ),
@@ -882,6 +1008,7 @@ export function encodeProject(p: Project): Json {
     tracks: p.tracks.map(encodeTrack),
     masterTrack: encodeTrack(p.masterTrack),
     vRack: encodeVRack(p.vRack),
+    fxBuses: encodeFxBuses(p.fxBuses ?? makeFxBuses()),
     markers: p.markers.map(encodeMarker),
     loopRegion: p.loopRegion ? encodeTimeRange(p.loopRegion) : undefined,
     isLoopEnabled: p.isLoopEnabled,
@@ -928,6 +1055,7 @@ export function decodeProject(value: unknown): Project {
           sampleRate
         ),
     vRack: decodeVRack(o.vRack, 'project.vRack'),
+    fxBuses: decodeFxBuses(o.fxBuses, 'project.fxBuses'),
     markers: arr(o.markers).map((m, i) => decodeMarker(m, `project.markers[${i}]`)),
     ...(o.loopRegion
       ? { loopRegion: decodeTimeRange(o.loopRegion, 'project.loopRegion', sampleRate) }

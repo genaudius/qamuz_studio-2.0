@@ -11,11 +11,22 @@ describe('inferInstrument', () => {
     expect(inferInstrument('requinto-solo.aiff').name).toBe('Requinto');
     expect(inferInstrument('coro_final.wav').name).toBe('Coro');
     expect(inferInstrument('segunda_guitarra.wav').name).toBe('Guitarra');
+    expect(inferInstrument('DUO-L2Mono_01.wav').role).toBe('duet_vocal');
+    expect(inferInstrument('bombo_05.R.wav').role).toBe('drums');
+    expect(inferInstrument('GUIRA-L2Mono_07.wav').role).toBe('percussion');
+    expect(inferInstrument('BASS DANNY G-L2Mono_01.wav').role).toBe('bass');
   });
 
   it('keeps unknown names cleaned from the filename', () => {
-    expect(inferInstrument('pad_espacial_2.wav').name).toBe('Cuerdas');
-    expect(inferInstrument('fx_riser.wav').name).toBe('fx riser');
+    expect(inferInstrument('pad_espacial_2.wav').name).toBe('Sintetizador');
+    expect(inferInstrument('fx_riser.wav').name).toBe('FX');
+    expect(inferInstrument('piano_main.wav').name).toBe('Piano / Teclado');
+  });
+  it('recognizes English Kie stem labels as instruments', () => {
+    expect(inferInstrument('Guitar').name).toBe('Guitarra');
+    expect(inferInstrument('Drums').role).toBe('drums');
+    expect(inferInstrument('Backing Vocals').name).toBe('Coro');
+    expect(inferInstrument('Woodwinds').name).toBe('Vientos');
   });
 });
 

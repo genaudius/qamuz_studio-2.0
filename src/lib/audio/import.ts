@@ -74,6 +74,28 @@ async function place(
   return clip.id;
 }
 
+async function allowImportDespiteFingerprint(buffer: AudioBuffer): Promise<boolean> {
+  try {
+    const { fingerprintAudioBuffer } = await import('./audio-fingerprint');
+    const { findExportedSong, confirmReuseExportedSession } = await import(
+      '$lib/persistence/session-duplicates'
+    );
+    const { currentStudioSession } = await import('$lib/persistence/sessions.svelte');
+    const hash = fingerprintAudioBuffer(buffer).hash;
+    const current = currentStudioSession.record;
+    if (current?.audioFingerprint === hash) return true;
+    const hit = findExportedSong({ fingerprint: hash });
+    if (!hit) return true;
+    if (current?.name && hit.session.name === current.name) return true;
+    const decision = await confirmReuseExportedSession(hit, 'importar este audio de nuevo');
+    if (decision === 'reopened') return false;
+    if (decision === 'cancel') return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 /** Import from an absolute path, the Tauri drop and dialog case. */
 export async function importAudioPath(
   path: string,
@@ -83,6 +105,9 @@ export async function importAudioPath(
   try {
     const bytes = await readAudioFile(path);
     const buffer = await decode(bytes.buffer as ArrayBuffer);
+    if (!(await allowImportDespiteFingerprint(buffer))) {
+      return { clipID: null, error: 'Audio ya presente en el historial del DAW' };
+    }
     const name = path.replace(/^.*[\\/]/, '');
     const reference = referenceFor(name, path, buffer);
 
@@ -265,6 +290,9 @@ export async function importAudioFile(
   try {
     const bytes = await file.arrayBuffer();
     const buffer = await decode(bytes);
+    if (!(await allowImportDespiteFingerprint(buffer))) {
+      return { clipID: null, error: 'Audio ya presente en el historial del DAW' };
+    }
     const reference = referenceFor(file.name, file.name, buffer);
 
     return { clipID: await place(reference, buffer, trackID, startBeat) };

@@ -1,6 +1,7 @@
 /** Project root model. Port of DAWCore/Models/Project.swift. */
 
 import type { AutomationCurve } from './automation';
+import { makeFxBuses, type FxBuses } from './channel-fx';
 import type { AudioFileReference, Clip } from './clip';
 import {
   rangeEnd,
@@ -105,6 +106,9 @@ export interface Project {
 
   vRack: VRack;
 
+  /** Global FX return buses (reverb + delay). */
+  fxBuses?: FxBuses;
+
   markers: Marker[];
 
   loopRegion?: TimeRange;
@@ -160,6 +164,7 @@ export function createNewProject(name = 'Untitled Project', sampleRate = 44100):
     ],
     masterTrack: makeTrack('Master', 'master', 'gray'),
     vRack: makeVRack(),
+    fxBuses: makeFxBuses(),
     markers: [],
     isLoopEnabled: false,
     audioFiles: [],

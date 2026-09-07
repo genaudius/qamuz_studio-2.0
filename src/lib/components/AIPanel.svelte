@@ -170,6 +170,18 @@
       cancelPending();
       return;
     }
+    if (action.id === 'mix_cancel') {
+      await confirmMixChoice('cancel');
+      return;
+    }
+    if (action.id === 'mix_at_bpm') {
+      await confirmMixChoice('mix_current');
+      return;
+    }
+    if (action.id === 'mix_detect') {
+      await confirmMixChoice('detect_tempo');
+      return;
+    }
     if (action.id === 'mount_voice') {
       const lyrics = (pending && pending.kind === 'lyrics' ? pending.lyrics : '') || getLastLyrics();
       const result = await executeDawAction('mount_voice', { lyrics });
@@ -237,7 +249,9 @@
     if (action.id === 'edit') {
       workspace.open('arrange');
       const turn = continueEditingTurn();
-      push('assistant', turn.message, { actions: turn.kind === 'answer' ? turn.actions : undefined, chips: turn.chips });
+      if (turn.kind === 'answer') {
+        push('assistant', turn.message, { actions: turn.actions, chips: turn.chips });
+      }
       return;
     }
     if (action.id === 'master') {
@@ -325,13 +339,72 @@
     busyLabel = 'Pensando en lo que pediste…';
     await wait(480);
     if (!(await charge('mix'))) return;
-    busyLabel = 'Escuchando las pistas…';
-    await wait(720);
-    busyLabel = 'Ajustando niveles con aire…';
-    await wait(640);
+    busyLabel = 'Preparando mezcla inteligente…';
+    await wait(400);
     const result = await executeDawAction('mix_session', { prompt: text });
+    const confirm = result.data?.mixConfirm as
+      | { prompt: string; bpm: number; message: string }
+      | undefined;
+    if (confirm) {
+      pending = {
+        kind: 'mix_confirm',
+        prompt: confirm.prompt,
+        bpm: confirm.bpm
+      };
+      push('assistant', `${confirm.message}\n\nDetectar tempo solo analiza BPM; mezclar con ${confirm.bpm} usa el tempo actual.`, {
+        chips: ['Mezcla'],
+        actions: [
+          { id: 'mix_cancel', label: 'Cancelar', prompt: '' },
+          { id: 'mix_at_bpm', label: `Mezclar con ${confirm.bpm}`, prompt: '' },
+          { id: 'mix_detect', label: 'Detectar tempo', prompt: '' }
+        ]
+      });
+      return;
+    }
     appendWorkEvent('mix', result.message, maestroWallet.unlimited ? 0 : maestroWallet.costOf('mix'));
     push('assistant', result.message, { chips: ['Mezcla'] });
+  }
+
+  async function confirmMixChoice(choice: 'detect_tempo' | 'mix_current' | 'cancel') {
+    if (!pending || (pending as { kind: string }).kind !== 'mix_confirm') return;
+    const mixPending = pending as { kind: 'mix_confirm'; prompt: string; bpm: number };
+    pending = null;
+    busy = true;
+    try {
+      if (choice === 'detect_tempo') {
+        busyLabel = 'Detectando tempo…';
+        const snap = await executeDawAction('snap_to_bar', {});
+        const bpm = projectStore.project.tempo.bpm;
+        push(
+          'assistant',
+          `${snap.message}\n\n¿Mezclo con el tempo actual (${bpm.toFixed(1)} BPM)?`,
+          {
+            actions: [
+              { id: 'mix_cancel', label: 'Cancelar', prompt: '' },
+              { id: 'mix_at_bpm', label: `Mezclar con ${Math.round(bpm)}`, prompt: '' }
+            ]
+          }
+        );
+        pending = {
+          kind: 'mix_confirm',
+          prompt: mixPending.prompt,
+          bpm
+        };
+        return;
+      }
+      if (choice === 'cancel') {
+        await executeDawAction('confirm_mix', { choice: 'cancel' });
+        push('assistant', 'Cancelé la mezcla. No apliqué cambios.');
+        return;
+      }
+      busyLabel = 'Aplicando EQ, compresión y niveles…';
+      await wait(500);
+      const result = await executeDawAction('confirm_mix', { choice: 'mix_current' });
+      appendWorkEvent('mix', result.message, maestroWallet.unlimited ? 0 : maestroWallet.costOf('mix'));
+      push('assistant', result.message, { chips: ['Mezcla'] });
+    } finally {
+      busy = false;
+    }
   }
 
   async function confirmPending() {
@@ -387,7 +460,8 @@
         return;
       }
       if (pending) {
-        if (pending.kind === 'delete_track') {
+        const activePending = pending;
+        if (activePending.kind === 'delete_track') {
           if (isAffirmative(text) || text.trim() === '__confirm_delete') {
             await confirmPending();
             return;
@@ -397,12 +471,12 @@
             return;
           }
         }
-        if (pending.kind === 'arrange') {
+        if (activePending.kind === 'arrange') {
           if (wantsMidiArrange(text) || text.trim() === '__midi_then_write') {
-            await runMaestroFollow(commitArrangeIntent(pending.intent));
+            await runMaestroFollow(commitArrangeIntent(activePending.intent));
             return;
           }
-          const follow = advanceArrangePending(pending, text);
+          const follow = advanceArrangePending(activePending, text);
           if (follow.kind === 'confirm') {
             pending = follow.pending;
             push('assistant', follow.message, { actions: follow.actions, chips: follow.chips });
@@ -414,7 +488,7 @@
             return;
           }
         }
-        if (pending.kind === 'lyrics') {
+        if (activePending.kind === 'lyrics') {
           if (text.trim() === '__lyrics_mount' || /monta(r)? la voz/.test(text.toLowerCase())) {
             await pickAction({ id: 'mount_voice', label: 'Crear pista Voz', prompt: '__lyrics_mount' });
             return;
@@ -480,14 +554,14 @@
           };
         }
         const chips =
-          ('chips' in command && command.chips) ||
+          (turn?.kind === 'command' ? turn.chips : undefined) ||
           (command.name === 'mount_voice'
             ? ['Voz', 'Letra']
             : command.name === 'write_part' || command.name === 'lay_form'
               ? ['Arrange']
               : undefined);
         const actions =
-          ('actions' in command && command.actions) ||
+          (turn?.kind === 'command' ? turn.actions : undefined) ||
           (command.name === 'mount_voice' ? voiceFollowUpActions() : undefined);
         push('assistant', result.message, { chips, actions });
         refreshMode();
@@ -633,6 +707,16 @@
   <button class="icon-btn" title="Connection settings" onclick={() => (showSettings = !showSettings)}>
     <Icon name="inspector" size={12} />
   </button>
+  <button
+    class="panel-close"
+    title="Cerrar chat"
+    onclick={() => {
+      projectStore.showAI = false;
+      if (workspace.module === 'maestro') workspace.open('arrange');
+    }}
+  >
+    <Icon name="close" size={12} />
+  </button>
 </div>
 
 <div class="body">
@@ -736,7 +820,7 @@
             {#each message.actions as action}
               <button
                 class="choice"
-              class:primary={action.id === 'confirm_delete' || action.id === 'publish' || action.id === 'sing_song' || action.id === 'mode_midi_write'}
+                class:primary={action.id === 'confirm_delete' || action.id === 'mix_at_bpm' || action.id === 'mix_detect' || action.id === 'publish' || action.id === 'sing_song' || action.id === 'mode_midi_write'}
                 onclick={() => void pickAction(action)}
               >
                 {action.label}
@@ -965,6 +1049,7 @@
   .what {
     color: var(--text-secondary);
     display: -webkit-box;
+    line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;

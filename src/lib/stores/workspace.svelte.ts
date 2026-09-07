@@ -11,12 +11,15 @@ export type StudioModule =
   | 'vrack'
   | 'mastering'
   | 'export'
-  | 'settings';
+  | 'settings'
+  | 'analysis';
 
 export class WorkspaceStore {
   module = $state<StudioModule>('arrange');
   sidebarExpanded = $state(true);
   sidebarHidden = $state(false);
+  /** Track id for Channel Strip / PROCESS side panel. */
+  channelStripTrackId = $state<string | null>(null);
 
   readonly showsArrange = $derived(
     this.module === 'arrange' ||
@@ -26,8 +29,22 @@ export class WorkspaceStore {
       this.module === 'maestro'
   );
 
+  /** Mobile “Más” drawer (full Studio menu). */
+  mobileMenuOpen = $state(false);
+
   open(module: StudioModule): void {
     this.module = module;
+    if (module === 'analysis' || module === 'mastering' || module === 'export') {
+      this.channelStripTrackId = null;
+    }
+  }
+
+  openChannelStrip(trackId: string): void {
+    this.channelStripTrackId = trackId;
+  }
+
+  closeChannelStrip(): void {
+    this.channelStripTrackId = null;
   }
 
   toggleSidebar(): void {
@@ -46,6 +63,18 @@ export class WorkspaceStore {
   showSidebar(): void {
     this.sidebarHidden = false;
     this.sidebarExpanded = true;
+  }
+
+  openMobileMenu(): void {
+    this.mobileMenuOpen = true;
+  }
+
+  closeMobileMenu(): void {
+    this.mobileMenuOpen = false;
+  }
+
+  toggleMobileMenu(): void {
+    this.mobileMenuOpen = !this.mobileMenuOpen;
   }
 }
 

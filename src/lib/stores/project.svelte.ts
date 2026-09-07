@@ -9,6 +9,12 @@
 import type { InstrumentName } from '$lib/audio/backend';
 import { instrumentSlot } from '$lib/audio/instruments';
 import {
+  makeChannelProcess,
+  makeFxBuses,
+  type ChannelProcess,
+  type FxBuses
+} from '$lib/core/channel-fx';
+import {
   makeAudioClip,
   makeAudioClipData,
   makeMIDIClip,
@@ -426,14 +432,40 @@ export class ProjectStore {
     );
   }
 
-  applyMixMoves(moves: Array<{ id: string; volume: number; pan: number }>): void {
+  applyMixMoves(
+    moves: Array<{
+      id: string;
+      volume: number;
+      pan: number;
+      channelProcess?: ChannelProcess;
+    }>
+  ): void {
     this.mutate('Maestro Mix', () => {
       for (const move of moves) {
         this.#withTrack(move.id, (track) => {
           track.volume = Math.max(0, Math.min(2, move.volume));
           track.pan = Math.max(-1, Math.min(1, move.pan));
+          if (move.channelProcess) {
+            track.channelProcess = structuredClone(move.channelProcess);
+          }
         });
       }
+    });
+  }
+
+  updateChannelProcess(id: string, mutator: (cp: ChannelProcess) => void): void {
+    this.mutate('Channel Process', () =>
+      this.#withTrack(id, (t) => {
+        if (!t.channelProcess) t.channelProcess = makeChannelProcess();
+        mutator(t.channelProcess);
+      })
+    );
+  }
+
+  setFxBuses(mutator: (buses: FxBuses) => void): void {
+    this.mutate('FX Buses', () => {
+      if (!this.project.fxBuses) this.project.fxBuses = makeFxBuses();
+      mutator(this.project.fxBuses);
     });
   }
 

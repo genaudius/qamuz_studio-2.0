@@ -45,7 +45,8 @@ import { helpReply, wantsHelp } from './studio-help';
 export type PendingConfirm =
   | { kind: 'delete_track'; trackId: string; trackName: string }
   | { kind: 'arrange'; intent: ArrangeIntent }
-  | { kind: 'lyrics'; idea: string; lyrics: string };
+  | { kind: 'lyrics'; idea: string; lyrics: string }
+  | { kind: 'mix_confirm'; prompt: string; bpm: number };
 
 export type MaestroTurn =
   | {

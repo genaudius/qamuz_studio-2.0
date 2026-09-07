@@ -8,7 +8,7 @@
   import Icon from './Icon.svelte';
   import MiniMeter from './MiniMeter.svelte';
   import { instrumentLabel, trackInstrument } from '$lib/audio/instruments';
-  import { trackLayoutLabel } from '$lib/audio/stems';
+  import { inferInstrument, roleLabel, trackLayoutLabel } from '$lib/audio/stems';
   import { formatDb } from '$lib/core/time';
   import { TRACK_COLOR_HEX, type Track } from '$lib/core/track';
   import { engine, projectStore } from '$lib/stores';
@@ -33,6 +33,14 @@
   const isMIDI = $derived(track.type === 'midi' || track.type === 'instrument');
   const level = $derived(engine.meters[track.id]?.peak ?? 0);
   const typeLabel = $derived(trackLayoutLabel(track));
+  const stemInfo = $derived(inferInstrument(track.name));
+  const instrumentPill = $derived(
+    track.type === 'audio' && stemInfo.role !== 'unknown'
+      ? stemInfo.name
+      : track.type === 'audio'
+        ? typeLabel
+        : null
+  );
 
   const outputLabel = $derived.by(() => {
     if (track.midiOutput?.kind !== 'rackInstrument') return 'Track';
@@ -159,12 +167,18 @@
           <span class="pill routing" title="MIDI output">{outputLabel}</span>
         {:else if track.type === 'audio'}
           <Icon name="waveform" size={10} />
-          <span class="pill">
+          <span
+            class="pill instrument"
+            class:known={stemInfo.role !== 'unknown'}
+            title={stemInfo.role !== 'unknown'
+              ? `Instrumento: ${stemInfo.name} (${roleLabel(stemInfo.role)})`
+              : typeLabel}
+          >
             {track.inputSource?.kind === 'vRackSum'
               ? 'V-Rack Sum'
               : track.inputSource?.kind === 'audioDevice'
                 ? `Input ${track.inputSource.channelIndex + 1}`
-                : typeLabel}
+                : instrumentPill}
           </span>
         {:else}
           <Icon name="mixer" size={10} />
@@ -331,6 +345,10 @@
   .pill.instrument {
     background: rgba(201, 160, 255, 0.28);
     color: var(--text-primary);
+  }
+
+  .pill.instrument.known {
+    background: rgba(130, 207, 255, 0.28);
   }
 
   .pill.routing {

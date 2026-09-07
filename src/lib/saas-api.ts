@@ -65,7 +65,7 @@ export async function saasApi(options: {
       if (!pending.has(id)) return;
       pending.delete(id);
       resolve({ status: 0, error: 'timeout' });
-    }, 45000);
+    }, 180000);
   });
 
   window.parent.postMessage(

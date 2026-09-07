@@ -319,6 +319,137 @@ class Voice {
   }
 }
 
+class Biquad {
+  constructor() {
+    this.b0 = 1;
+    this.b1 = 0;
+    this.b2 = 0;
+    this.a1 = 0;
+    this.a2 = 0;
+    this.z1 = 0;
+    this.z2 = 0;
+  }
+
+  setPeaking(freq, gainDb, q, sampleRate) {
+    const A = Math.pow(10, gainDb / 40);
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * Math.max(0.1, q));
+    const cos = Math.cos(w0);
+    const b0 = 1 + alpha * A;
+    const b1 = -2 * cos;
+    const b2 = 1 - alpha * A;
+    const a0 = 1 + alpha / A;
+    const a1 = -2 * cos;
+    const a2 = 1 - alpha / A;
+    this.b0 = b0 / a0;
+    this.b1 = b1 / a0;
+    this.b2 = b2 / a0;
+    this.a1 = a1 / a0;
+    this.a2 = a2 / a0;
+  }
+
+  setLowshelf(freq, gainDb, sampleRate) {
+    const A = Math.pow(10, gainDb / 40);
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const S = 1;
+    const alpha = (Math.sin(w0) / 2) * Math.sqrt((A + 1 / A) * (1 / S - 1) + 2);
+    const cos = Math.cos(w0);
+    const b0 = A * (A + 1 - (A - 1) * cos + 2 * Math.sqrt(A) * alpha);
+    const b1 = 2 * A * (A - 1 - (A + 1) * cos);
+    const b2 = A * (A + 1 - (A - 1) * cos - 2 * Math.sqrt(A) * alpha);
+    const a0 = A + 1 + (A - 1) * cos + 2 * Math.sqrt(A) * alpha;
+    const a1 = -2 * (A - 1 + (A + 1) * cos);
+    const a2 = A + 1 + (A - 1) * cos - 2 * Math.sqrt(A) * alpha;
+    this.b0 = b0 / a0;
+    this.b1 = b1 / a0;
+    this.b2 = b2 / a0;
+    this.a1 = a1 / a0;
+    this.a2 = a2 / a0;
+  }
+
+  setHighshelf(freq, gainDb, sampleRate) {
+    const A = Math.pow(10, gainDb / 40);
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const S = 1;
+    const alpha = (Math.sin(w0) / 2) * Math.sqrt((A + 1 / A) * (1 / S - 1) + 2);
+    const cos = Math.cos(w0);
+    const b0 = A * (A + 1 + (A - 1) * cos + 2 * Math.sqrt(A) * alpha);
+    const b1 = -2 * A * (A - 1 + (A + 1) * cos);
+    const b2 = A * (A + 1 + (A - 1) * cos - 2 * Math.sqrt(A) * alpha);
+    const a0 = A + 1 - (A - 1) * cos + 2 * Math.sqrt(A) * alpha;
+    const a1 = 2 * (A - 1 - (A + 1) * cos);
+    const a2 = A + 1 - (A - 1) * cos - 2 * Math.sqrt(A) * alpha;
+    this.b0 = b0 / a0;
+    this.b1 = b1 / a0;
+    this.b2 = b2 / a0;
+    this.a1 = a1 / a0;
+    this.a2 = a2 / a0;
+  }
+
+  process(x) {
+    const out = this.b0 * x + this.z1;
+    this.z1 = this.b1 * x - this.a1 * out + this.z2;
+    this.z2 = this.b2 * x - this.a2 * out;
+    return out;
+  }
+}
+
+class SimpleReverb {
+  constructor(sampleRate) {
+    this.combLen = [
+      Math.floor(0.0297 * sampleRate),
+      Math.floor(0.0371 * sampleRate),
+      Math.floor(0.0411 * sampleRate),
+      Math.floor(0.0437 * sampleRate)
+    ];
+    this.combs = this.combLen.map((n) => ({ buf: new Float32Array(n), i: 0, f: 0.8 }));
+    this.apLen = [Math.floor(0.005 * sampleRate), Math.floor(0.0017 * sampleRate)];
+    this.aps = this.apLen.map((n) => ({ buf: new Float32Array(n), i: 0 }));
+    this.lp = 0;
+  }
+
+  process(x, size, decay, precut) {
+    let sum = 0;
+    const damp = 0.2 + precut * 0.7;
+    for (const c of this.combs) {
+      const y = c.buf[c.i];
+      c.f = 0.55 + decay * 0.4 * (0.7 + size * 0.3);
+      c.buf[c.i] = x + y * c.f * (1 - damp * 0.15);
+      c.i = (c.i + 1) % c.buf.length;
+      sum += y;
+    }
+    let z = sum * 0.25;
+    for (const ap of this.aps) {
+      const bufy = ap.buf[ap.i];
+      const out = -z + bufy;
+      ap.buf[ap.i] = z + bufy * 0.5;
+      ap.i = (ap.i + 1) % ap.buf.length;
+      z = out;
+    }
+    this.lp = this.lp * (0.4 + precut * 0.5) + z * (0.6 - precut * 0.4);
+    return this.lp;
+  }
+}
+
+class DelayLine {
+  constructor(maxSamples) {
+    this.buf = new Float32Array(maxSamples);
+    this.max = maxSamples;
+    this.w = 0;
+  }
+
+  write(x) {
+    this.buf[this.w] = x;
+    this.w = (this.w + 1) % this.max;
+  }
+
+  read(delaySamples) {
+    const d = Math.max(1, Math.min(this.max - 1, Math.floor(delaySamples)));
+    const r = (this.w - d + this.max) % this.max;
+    return this.buf[r];
+  }
+}
+
 class Track {
   constructor() {
     this.volume = 0.7937;
@@ -331,13 +462,29 @@ class Track {
     this.peak = 0;
     this.sumSquares = 0;
     this.clips = [];
+
+    this.preGain = 1;
+    this.phaseInvert = false;
+    this.eqEnabled = false;
+    this.eqBands = [];
+    this.eqL = [new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad()];
+    this.eqR = [new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad()];
+    this.compEnabled = false;
+    this.comp = { thresholdDb: -18, ratio: 4, attackMs: 5, releaseMs: 50, makeupDb: 0 };
+    this.compEnv = 0;
+    this.inserts = [];
+    this.sendReverb = 0;
+    this.sendDelay = 0;
+    this.chorusPhase = 0;
+    this.phaserPhase = 0;
+    this.delayIns = new DelayLine(Math.floor((typeof sampleRate === 'number' ? sampleRate : 48000) * 0.1));
+    this.unmaskEnv = 0;
   }
 
   noteOn(note, velocity) {
     let voice = this.voices.find((v) => !v.active);
 
     if (!voice) {
-      // Steal the oldest voice already releasing, else simply the oldest.
       voice = this.voices.reduce((best, candidate) => {
         const bestScore = (best.stage === 'release' ? 1e6 : 0) + best.age;
         const score = (candidate.stage === 'release' ? 1e6 : 0) + candidate.age;
@@ -361,6 +508,130 @@ class Track {
       if (immediate) voice.kill();
       else voice.release();
     }
+  }
+
+  syncEq(sampleRate) {
+    for (let i = 0; i < 5; i += 1) {
+      const band = this.eqBands[i];
+      if (!band) continue;
+      const apply = (bq) => {
+        if (band.type === 'lowshelf') bq.setLowshelf(band.freq, band.gainDb, sampleRate);
+        else if (band.type === 'highshelf') bq.setHighshelf(band.freq, band.gainDb, sampleRate);
+        else bq.setPeaking(band.freq, band.gainDb, band.q, sampleRate);
+      };
+      apply(this.eqL[i]);
+      apply(this.eqR[i]);
+    }
+  }
+
+  #filterSample(bqChain, x, bands) {
+    let y = x;
+    for (let i = 0; i < bqChain.length; i += 1) {
+      const band = bands[i];
+      if (!band || !band.enabled) continue;
+      if (Math.abs(band.gainDb) < 0.01 && band.type === 'peaking') continue;
+      y = bqChain[i].process(y);
+    }
+    return y;
+  }
+
+  #compress(x, sampleRate) {
+    if (!this.compEnabled) return x;
+    const thr = Math.pow(10, this.comp.thresholdDb / 20);
+    const ratio = Math.max(1, this.comp.ratio);
+    const atk = Math.exp(-1 / (sampleRate * (this.comp.attackMs / 1000)));
+    const rel = Math.exp(-1 / (sampleRate * (this.comp.releaseMs / 1000)));
+    const level = Math.abs(x);
+    if (level > this.compEnv) this.compEnv = atk * this.compEnv + (1 - atk) * level;
+    else this.compEnv = rel * this.compEnv + (1 - rel) * level;
+    let gr = 1;
+    if (this.compEnv > thr) {
+      const over = this.compEnv / thr;
+      const compressed = Math.pow(over, 1 / ratio - 1);
+      gr = compressed;
+    }
+    const makeup = Math.pow(10, this.comp.makeupDb / 20);
+    return x * gr * makeup;
+  }
+
+  #insertSample(x, sampleRate) {
+    let y = x;
+    for (const ins of this.inserts) {
+      if (!ins.enabled) continue;
+      const p = ins.params || {};
+      if (ins.kind === 'drive') {
+        const drive = 1 + (p.drive ?? 0.35) * 8;
+        const wet = Math.tanh(y * drive) / Math.tanh(drive);
+        const mix = p.mix ?? 0.45;
+        y = y * (1 - mix) + wet * mix;
+      } else if (ins.kind === 'tubeEq') {
+        const low = ((p.low ?? 0.55) - 0.5) * 12;
+        const mid = ((p.mid ?? 0.5) - 0.5) * 8;
+        const high = ((p.high ?? 0.58) - 0.5) * 10;
+        const drive = 1 + (p.drive ?? 0.25) * 3;
+        y = Math.tanh(y * drive);
+        // crude tone tilt
+        y = y * (1 + mid * 0.05) + Math.sign(y) * Math.abs(y) * 0.02 * high + y * 0.03 * low;
+      } else if (ins.kind === 'chorus') {
+        this.chorusPhase += ((0.1 + (p.rate ?? 0.35) * 2) * Math.PI * 2) / sampleRate;
+        const depth = 0.002 + (p.depth ?? 0.4) * 0.008;
+        const delaySamples = (0.012 + Math.sin(this.chorusPhase) * depth) * sampleRate;
+        this.delayIns.write(y);
+        const wet = this.delayIns.read(delaySamples);
+        const mix = p.mix ?? 0.35;
+        y = y * (1 - mix) + wet * mix;
+      } else if (ins.kind === 'phaser') {
+        this.phaserPhase += ((0.05 + (p.rate ?? 0.3) * 1.5) * Math.PI * 2) / sampleRate;
+        const depth = p.depth ?? 0.5;
+        const allpass = y + Math.sin(this.phaserPhase) * depth * 0.5 * y;
+        const mix = p.mix ?? 0.4;
+        y = y * (1 - mix) + allpass * mix;
+      } else if (ins.kind === 'doubler') {
+        const delayMs = 8 + (p.delayMs ?? 0.35) * 24;
+        this.delayIns.write(y);
+        const wet = this.delayIns.read((delayMs / 1000) * sampleRate);
+        const width = p.width ?? 0.55;
+        const mix = p.mix ?? 0.4;
+        y = y * (1 - mix) + wet * mix * (0.7 + width * 0.3);
+      } else if (ins.kind === 'room') {
+        // Lightweight one-pole + delay smear as insert room
+        this.delayIns.write(y);
+        const size = p.size ?? 0.4;
+        const decay = p.decay ?? 0.45;
+        const wet =
+          this.delayIns.read((0.02 + size * 0.06) * sampleRate) * (0.4 + decay * 0.5) +
+          this.delayIns.read((0.035 + size * 0.08) * sampleRate) * 0.25;
+        const mix = p.mix ?? 0.25;
+        y = y * (1 - mix) + wet * mix;
+      } else if (ins.kind === 'unmask') {
+        const thr = p.threshold ?? 0.45;
+        const speed = 0.001 + (p.speed ?? 0.4) * 0.02;
+        const level = Math.abs(y);
+        this.unmaskEnv += (level - this.unmaskEnv) * speed;
+        const duck = this.unmaskEnv > thr * 0.5 ? Math.max(0.55, 1 - (this.unmaskEnv - thr * 0.5)) : 1;
+        // Duck mid band slightly
+        y *= 0.85 + duck * 0.15;
+      }
+    }
+    return y;
+  }
+
+  processStereo(l, r, sampleRate) {
+    let left = l * this.preGain;
+    let right = r * this.preGain;
+    if (this.phaseInvert) {
+      left = -left;
+      right = -right;
+    }
+    if (this.eqEnabled) {
+      left = this.#filterSample(this.eqL, left, this.eqBands);
+      right = this.#filterSample(this.eqR, right, this.eqBands);
+    }
+    left = this.#compress(left, sampleRate);
+    right = this.#compress(right, sampleRate);
+    left = this.#insertSample(left, sampleRate);
+    right = this.#insertSample(right, sampleRate);
+    return [left, right];
   }
 }
 
@@ -389,6 +660,19 @@ class EngineProcessor extends AudioWorkletProcessor {
 
     this.blocksSinceReport = 0;
     this.reportInterval = 6;
+
+    this.fxReverb = new SimpleReverb(sampleRate);
+    this.fxDelayL = new DelayLine(Math.floor(sampleRate * 2));
+    this.fxDelayR = new DelayLine(Math.floor(sampleRate * 2));
+    this.fxBuses = {
+      reverb: { enabled: true, size: 0.55, decay: 0.5, precut: 0.35, busVolDb: -6 },
+      delay: { enabled: true, syncBeats: 0.25, feedback: 0.35, busVolDb: -8, bpm: 120 }
+    };
+
+    // Analysis ring for spectrum (downsampled mono)
+    this.analysisBuf = new Float32Array(2048);
+    this.analysisWrite = 0;
+    this.analysisListen = 'stereo'; // stereo | mid | side
 
     this.port.onmessage = (event) => this.#handle(event.data);
   }
@@ -424,8 +708,29 @@ class EngineProcessor extends AudioWorkletProcessor {
           track.allNotesOff(true);
           track.instrument = msg.instrument;
         }
+        if (msg.preGain !== undefined) track.preGain = msg.preGain;
+        if (msg.phaseInvert !== undefined) track.phaseInvert = msg.phaseInvert;
+        if (msg.eqEnabled !== undefined) track.eqEnabled = msg.eqEnabled;
+        if (msg.eqBands !== undefined) {
+          track.eqBands = msg.eqBands;
+          track.syncEq(sampleRate);
+        }
+        if (msg.compEnabled !== undefined) track.compEnabled = msg.compEnabled;
+        if (msg.comp !== undefined) track.comp = msg.comp;
+        if (msg.inserts !== undefined) track.inserts = msg.inserts;
+        if (msg.sendReverb !== undefined) track.sendReverb = msg.sendReverb;
+        if (msg.sendDelay !== undefined) track.sendDelay = msg.sendDelay;
         break;
       }
+
+      case 'fxBuses':
+        if (msg.reverb) Object.assign(this.fxBuses.reverb, msg.reverb);
+        if (msg.delay) Object.assign(this.fxBuses.delay, msg.delay);
+        break;
+
+      case 'analysisListen':
+        if (msg.mode) this.analysisListen = msg.mode;
+        break;
 
       case 'scheduleEvents':
         this.events = this.events.concat(msg.events);
@@ -647,6 +952,8 @@ class EngineProcessor extends AudioWorkletProcessor {
 
     const mixL = new Float32Array(blockSize);
     const mixR = new Float32Array(blockSize);
+    const revIn = new Float32Array(blockSize);
+    const dlyIn = new Float32Array(blockSize);
 
     for (const track of this.tracks.values()) {
       mixL.fill(0);
@@ -675,7 +982,6 @@ class EngineProcessor extends AudioWorkletProcessor {
       }
 
       const gain = track.muted ? 0 : track.volume;
-      // Stereo balance: a stereo file keeps L/R; pan only attenuates one side.
       const panL = track.pan <= 0 ? 1 : 1 - track.pan;
       const panR = track.pan >= 0 ? 1 : 1 + track.pan;
       const gainLeft = gain * panL;
@@ -685,10 +991,16 @@ class EngineProcessor extends AudioWorkletProcessor {
       let sum = 0;
 
       for (let i = 0; i < blockSize; i += 1) {
-        const l = mixL[i] * gainLeft;
-        const r = mixR[i] * gainRight;
+        const processed = track.processStereo(mixL[i], mixR[i], sampleRate);
+        const l = processed[0] * gainLeft;
+        const r = processed[1] * gainRight;
         left[i] += l;
         if (right !== left) right[i] += r;
+
+        if (!track.muted) {
+          revIn[i] += ((l + r) * 0.5) * track.sendReverb;
+          dlyIn[i] += ((l + r) * 0.5) * track.sendDelay;
+        }
 
         const magnitude = Math.max(Math.abs(l), Math.abs(r));
         if (magnitude > peak) peak = magnitude;
@@ -699,26 +1011,73 @@ class EngineProcessor extends AudioWorkletProcessor {
       track.sumSquares = sum / blockSize;
     }
 
+    // FX buses
+    const rev = this.fxBuses.reverb;
+    const dly = this.fxBuses.delay;
+    const revGain = rev.enabled ? Math.pow(10, (rev.busVolDb ?? -6) / 20) : 0;
+    const dlyGain = dly.enabled ? Math.pow(10, (dly.busVolDb ?? -8) / 20) : 0;
+    const bpm = dly.bpm || this.metronomeBpm || 120;
+    const delaySamples = ((dly.syncBeats || 0.25) * 60) / bpm * sampleRate;
+
+    for (let i = 0; i < blockSize; i += 1) {
+      if (revGain > 0.0001 && revIn[i] !== 0) {
+        const wet = this.fxReverb.process(revIn[i], rev.size ?? 0.55, rev.decay ?? 0.5, rev.precut ?? 0.35);
+        left[i] += wet * revGain;
+        if (right !== left) right[i] += wet * revGain;
+      }
+      if (dlyGain > 0.0001) {
+        const fb = dly.feedback ?? 0.35;
+        const delayedL = this.fxDelayL.read(delaySamples);
+        const delayedR = this.fxDelayR.read(delaySamples);
+        this.fxDelayL.write(dlyIn[i] + delayedL * fb);
+        this.fxDelayR.write(dlyIn[i] + delayedR * fb);
+        left[i] += delayedL * dlyGain;
+        if (right !== left) right[i] += delayedR * dlyGain;
+      }
+    }
+
     this.#renderClicks(left, right, blockSize);
 
     let masterPeak = 0;
     let masterSum = 0;
+    let truePeak = 0;
 
     for (let i = 0; i < blockSize; i += 1) {
       left[i] *= this.masterVolume;
       if (right !== left) right[i] *= this.masterVolume;
 
-      // Soft clip so a hot mix distorts gracefully instead of tearing.
       left[i] = Math.tanh(left[i]);
       if (right !== left) right[i] = Math.tanh(right[i]);
 
-      const magnitude = Math.max(Math.abs(left[i]), Math.abs(right[i]));
+      let l = left[i];
+      let r = right !== left ? right[i] : left[i];
+      if (this.analysisListen === 'mid') {
+        const m = (l + r) * 0.5;
+        l = m;
+        r = m;
+        left[i] = m;
+        if (right !== left) right[i] = m;
+      } else if (this.analysisListen === 'side') {
+        const s = (l - r) * 0.5;
+        l = s;
+        r = -s;
+        left[i] = s;
+        if (right !== left) right[i] = -s;
+      }
+
+      const mono = (l + r) * 0.5;
+      this.analysisBuf[this.analysisWrite] = mono;
+      this.analysisWrite = (this.analysisWrite + 1) % this.analysisBuf.length;
+
+      const magnitude = Math.max(Math.abs(l), Math.abs(r));
       if (magnitude > masterPeak) masterPeak = magnitude;
+      if (magnitude > truePeak) truePeak = magnitude;
       masterSum += magnitude * magnitude;
     }
 
     this.masterPeak = Math.max(masterPeak, this.masterPeak * 0.72);
     this.masterSumSquares = masterSum / blockSize;
+    this.masterTruePeak = Math.max(truePeak, (this.masterTruePeak || 0) * 0.995);
 
     if (this.playing) this.transportSample = blockEnd;
 
@@ -737,13 +1096,34 @@ class EngineProcessor extends AudioWorkletProcessor {
       meters[id] = { peak: track.peak, rms: Math.sqrt(track.sumSquares) };
     }
 
+    // Lightweight spectrum snapshot (64 bins magnitude)
+    const spectrum = new Float32Array(64);
+    const n = this.analysisBuf.length;
+    for (let bin = 0; bin < 64; bin += 1) {
+      let re = 0;
+      let im = 0;
+      const freq = bin / 64;
+      for (let i = 0; i < n; i += 8) {
+        const x = this.analysisBuf[(this.analysisWrite + i) % n];
+        const ang = -2 * Math.PI * freq * i;
+        re += x * Math.cos(ang);
+        im += x * Math.sin(ang);
+      }
+      spectrum[bin] = Math.sqrt(re * re + im * im) / (n / 8);
+    }
+
     this.port.postMessage({
       type: 'clock',
       samplePosition: this.transportSample,
       contextTime: currentTime,
       playing: this.playing,
       meters,
-      master: { peak: this.masterPeak, rms: Math.sqrt(this.masterSumSquares) }
+      master: {
+        peak: this.masterPeak,
+        rms: Math.sqrt(this.masterSumSquares),
+        truePeak: this.masterTruePeak || 0
+      },
+      spectrum: Array.from(spectrum)
     });
   }
 }

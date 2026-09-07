@@ -4,7 +4,7 @@
  */
 
 import type { InstrumentName } from './backend';
-import type { Track } from '$lib/core/track';
+import type { Track, TrackColor } from '$lib/core/track';
 
 export const AUDIO_EXTENSIONS = ['wav', 'wave', 'aiff', 'aif', 'mp3', 'm4a', 'flac', 'ogg', 'aac', 'caf'];
 export const MIDI_EXTENSIONS = ['mid', 'midi', 'smf'];
@@ -20,26 +20,30 @@ export interface NamedStem {
   instrument?: InstrumentName;
 }
 
+/** Rules from Qamuz Studio 1.0 HTML (`inferInstrument`) + dual-session roles. */
 const NAME_RULES: [RegExp, string, string, InstrumentName?][] = [
   [/\b(voz[_ ]?leader|lead vox|lead vocal|acapella|a cappella)\b/, 'Voz', 'lead_vocal'],
-  [/\b(voz[_ ]?duo|dueto|duet)\b/, 'Voz duo', 'duet_vocal'],
+  [/\b(voz[_ ]?duo|dueto|duet|duo)\b/, 'Voz duo', 'duet_vocal'],
   [/\b(coro|choir|backing|bgv|harmony)\b/, 'Coro', 'backing_vocal'],
   [/\b(voz|vocal|vox|voice|canto)\b/, 'Voz', 'lead_vocal'],
   [/\b(requinto|lead guitar|guitar lead|solo guitar)\b/, 'Requinto', 'lead_guitar', 'lead'],
-  [/\b(segunda|rhythm guitar|guitar rhythm|guitarra)\b/, 'Guitarra', 'rhythm_guitar', 'pluck'],
+  [/\b(segunda|rhythm guitar|guitar rhythm|guitarra|guitar)\b/, 'Guitarra', 'rhythm_guitar', 'pluck'],
   [/\b(bajo|bass)\b/, 'Bajo', 'bass', 'bass'],
+  [/\b(guira|güira|guiro|güiro)\b/, 'Güira', 'percussion', 'drums'],
+  [/\b(bongo|conga|tambora|timbal|percussion|percusion|percusión|perc)\b/, 'Percusión', 'percussion', 'drums'],
   [/\b(kick|bombo)\b/, 'Kick', 'drums', 'drums'],
   [/\b(snare|caja)\b/, 'Caja', 'drums', 'drums'],
   [/\b(hat|hihat|hi-hat|charles)\b/, 'Hi-hat', 'drums', 'drums'],
-  [/\b(drum|bateria|batería|kit)\b/, 'Batería', 'drums', 'drums'],
-  [/\b(guira|güira|guiro|güiro)\b/, 'Güira', 'percussion', 'drums'],
-  [/\b(tambora|timbal|conga|bongo|perc)\b/, 'Percusión', 'percussion', 'drums'],
-  [/\b(piano|keys|teclado)\b/, 'Piano', 'keys', 'piano'],
+  [/\b(drum|drums|bateria|batería|kit)\b/, 'Batería', 'drums', 'drums'],
+  [/\b(piano|keys|keyboard|teclado)\b/, 'Piano / Teclado', 'keys', 'piano'],
   [/\b(rhodes|rodhes|epiano|e-piano|wurlitzer)\b/, 'Rhodes', 'keys', 'epiano'],
-  [/\b(pad|strings|cuerdas|violin|viola|cello|chelo)\b/, 'Cuerdas', 'strings', 'pad'],
-  [/\b(brass|metal|trompeta|sax|trombone)\b/, 'Metales', 'brass', 'lead'],
-  [/\b(synth|lead synth|dx )\b/, 'Synth', 'keys', 'lead'],
-  [/\b(pluck)\b/, 'Pluck', 'keys', 'pluck']
+  [/\b(violin|viola|cello|chelo|strings|cuerdas)\b/, 'Cuerdas', 'strings', 'pad'],
+  [/\b(woodwind|woodwinds|vientos|flute|oboe|clarinet)\b/, 'Vientos', 'woodwinds', 'lead'],
+  [/\b(sax|saxophone|trompeta|trumpet|brass|metales|trombone)\b/, 'Metales', 'brass', 'lead'],
+  [/\b(synth|pad|sintetizador)\b/, 'Sintetizador', 'keys', 'lead'],
+  [/\b(pluck)\b/, 'Pluck', 'keys', 'pluck'],
+  [/\b(fx|effects|otros|other)\b/, 'FX', 'unknown'],
+  [/\b(instrumental|no[_ ]?vocals)\b/, 'Instrumental', 'unknown']
 ];
 
 export function fileExtension(path: string): string {
@@ -116,4 +120,66 @@ export function trackLayoutLabel(track: Track): string {
 
 export function instrumentForStem(stem: NamedStem): InstrumentName {
   return stem.instrument ?? 'piano';
+}
+
+/** Short Spanish label for mixer / track header (Studio 1.0 style). */
+export function roleLabel(role: string): string {
+  switch (role) {
+    case 'lead_vocal':
+      return 'Voz';
+    case 'duet_vocal':
+      return 'Voz duo';
+    case 'backing_vocal':
+      return 'Coro';
+    case 'bass':
+      return 'Bajo';
+    case 'drums':
+      return 'Batería';
+    case 'percussion':
+      return 'Percusión';
+    case 'lead_guitar':
+      return 'Requinto';
+    case 'rhythm_guitar':
+      return 'Guitarra';
+    case 'keys':
+      return 'Teclado';
+    case 'strings':
+      return 'Cuerdas';
+    case 'brass':
+      return 'Metales';
+    case 'woodwinds':
+      return 'Vientos';
+    default:
+      return 'Audio';
+  }
+}
+
+/** Stable color per instrument role so stems are easy to spot on the arrange. */
+export function roleTrackColor(role: string): TrackColor {
+  switch (role) {
+    case 'lead_vocal':
+    case 'duet_vocal':
+      return 'purple';
+    case 'backing_vocal':
+      return 'pink';
+    case 'bass':
+      return 'orange';
+    case 'drums':
+      return 'green';
+    case 'percussion':
+      return 'yellow';
+    case 'lead_guitar':
+      return 'cyan';
+    case 'rhythm_guitar':
+      return 'blue';
+    case 'keys':
+      return 'cyan';
+    case 'strings':
+      return 'blue';
+    case 'brass':
+    case 'woodwinds':
+      return 'red';
+    default:
+      return 'gray';
+  }
 }

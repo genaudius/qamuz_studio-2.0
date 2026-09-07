@@ -15,16 +15,13 @@ import {
   wantsGrooveChange,
   wantsLyrics
 } from './song-sketch';
-import type { Track } from '$lib/core/track';
+import { makeTrack } from '$lib/core/track';
 
 describe('empty arrange', () => {
   it('sees lanes without clips as empty', () => {
     const inventory = inspectTracks(
-      [
-        { id: '1', name: 'Audio 1', type: 'audio', clips: [] },
-        { id: '2', name: 'Midi 1', type: 'midi', clips: [] }
-      ] as Track[],
-      '1'
+      [makeTrack('Audio 1', 'audio', 'blue'), makeTrack('Midi 1', 'midi', 'purple')],
+      null
     );
     expect(inventory.allEmpty).toBe(true);
     expect(inventory.empty.map((track) => track.name)).toEqual(['Audio 1', 'Midi 1']);

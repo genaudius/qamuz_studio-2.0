@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
-   * Maestro session gate from the 1.0 SaaS shell: continue last song, pick a
-   * session, or describe a new idea before opening the arrange.
+   * Maestro session gate: continue last song, pick a session, choose library /
+   * playlist tracks, or describe a new idea before opening the arrange.
    */
 
+  import { onMount } from 'svelte';
   import {
     availableName,
     makeBaseName,
@@ -14,16 +15,42 @@
   import { openProject, openProjectAtPath, recentProjects } from '$lib/persistence/documents.svelte';
   import { isTauri } from '$lib/persistence/tauri';
   import { arrangeHasAudio } from '$lib/ai/session-inventory';
+  import { saasApi } from '$lib/saas-api';
+  import { openMixSessionFromSong, openStemSessionFromSong } from '$lib/audio/open-stems-session';
+  import { workProgress } from '$lib/stores/work-progress.svelte';
 
   interface Props {
     onOpen: (session: StudioSession, isNew: boolean) => void;
   }
+
+  type LibrarySong = {
+    id: string;
+    title: string;
+    durationMs?: number | null;
+    prompt?: string | null;
+    genre?: string | null;
+    isInstrumental?: boolean;
+    imageUrl?: string | null;
+  };
+
+  type PlaylistBucket = {
+    id: string;
+    name: string;
+    tracks: LibrarySong[];
+  };
 
   let { onOpen }: Props = $props();
   let idea = $state('');
   let sessionName = $state('');
   let nameWarning = $state('');
   let query = $state('');
+  let songQuery = $state('');
+  let library = $state<LibrarySong[]>([]);
+  let playlists = $state<PlaylistBucket[]>([]);
+  let songsLoading = $state(false);
+  let songsError = $state('');
+  let selectedPlaylistId = $state<string | 'library'>('library');
+  let launchingId = $state<string | null>(null);
 
   const sessions = $derived(sessionGate.items);
   const importedReady = $derived(arrangeHasAudio());
@@ -45,6 +72,52 @@
         item.name.toLocaleLowerCase('es').includes(needle) ||
         item.path.toLocaleLowerCase('es').includes(needle)
     );
+  });
+
+  const visibleSongs = $derived.by(() => {
+    const source =
+      selectedPlaylistId === 'library'
+        ? library
+        : playlists.find((p) => p.id === selectedPlaylistId)?.tracks || [];
+    const needle = songQuery.trim().toLocaleLowerCase('es');
+    if (!needle) return source;
+    return source.filter(
+      (song) =>
+        song.title.toLocaleLowerCase('es').includes(needle) ||
+        (song.prompt || '').toLocaleLowerCase('es').includes(needle) ||
+        (song.genre || '').toLocaleLowerCase('es').includes(needle)
+    );
+  });
+
+  async function loadSongs() {
+    songsLoading = true;
+    songsError = '';
+    try {
+      const response = await saasApi({ path: '/api/studio/songs' });
+      const body = response.json as
+        | { library?: LibrarySong[]; playlists?: PlaylistBucket[]; error?: string }
+        | undefined;
+      if (response.status !== 200) {
+        songsError = body?.error || response.error || 'No pude cargar tus canciones';
+        return;
+      }
+      library = Array.isArray(body?.library) ? body!.library! : [];
+      playlists = Array.isArray(body?.playlists) ? body!.playlists! : [];
+    } catch (error) {
+      songsError = error instanceof Error ? error.message : 'No pude cargar tus canciones';
+    } finally {
+      songsLoading = false;
+    }
+  }
+
+  onMount(() => {
+    if (sessionGate.view === 'songs') void loadSongs();
+  });
+
+  $effect(() => {
+    if (sessionGate.view === 'songs' && !library.length && !songsLoading && !songsError) {
+      void loadSongs();
+    }
   });
 
   function continueToName() {
@@ -83,10 +156,33 @@
     );
     sessionGate.close();
   }
+
+  async function openSong(song: LibrarySong, extractStems: boolean) {
+    if (launchingId) return;
+    launchingId = song.id;
+    sessionGate.close();
+    try {
+      const payload = {
+        musicId: song.id,
+        session: song.title,
+        idea: song.prompt || song.title,
+        genre: song.genre || undefined,
+        instrumental: Boolean(song.isInstrumental),
+        imageUrl: song.imageUrl || undefined
+      };
+      if (extractStems) await openStemSessionFromSong(payload);
+      else await openMixSessionFromSong(payload);
+    } catch (error) {
+      workProgress.fail((error as Error).message);
+      sessionGate.open('songs');
+    } finally {
+      launchingId = null;
+    }
+  }
 </script>
 
 <div class="gate">
-  <div class="card">
+  <div class="card" class:wide={sessionGate.view === 'songs'}>
     <header>
       <p>QAMUZ · MAESTRO</p>
       <h1>QAMUZ Studio</h1>
@@ -95,10 +191,10 @@
     <div class="body">
       {#if sessionGate.view === 'home'}
         {#if importedReady}
-          <p class="notice">Ya tienes stems en el arrange. Escúchalos con Play. El título se cambia con doble clic en el nombre de arriba, en la barra.</p>
-          <button class="primary" onclick={() => sessionGate.close()}>Escuchar los stems importados</button>
+          <p class="notice">Ya tienes audio en el arrange. Escúchalo con Play. El título se cambia con doble clic en el nombre de arriba.</p>
+          <button class="primary" onclick={() => sessionGate.close()}>Ir al editor</button>
         {:else}
-        <p class="notice">¡Qué bueno verte otra vez! ¿Continuamos con la última canción o creamos una sesión nueva?</p>
+        <p class="notice">¿Continuamos con la última sesión, abrimos una canción de tu biblioteca, o creamos algo nuevo?</p>
         {#if sessions[0]}
           <button class="last" onclick={() => openExisting(sessions[0])}>
             <span>Continuar última sesión</span>
@@ -108,20 +204,95 @@
         {/if}
         <div class="row">
           <button class="ghost" onclick={() => (sessionGate.view = 'list')}>
-            Ver mis sesiones ({sessions.length})
+            Sesiones ({sessions.length})
           </button>
-          <button class="ghost" onclick={() => (sessionGate.view = 'open')}>Abrir</button>
-            <button
-              class="primary"
-              onclick={() => {
-                idea = '';
-                sessionName = '';
-                sessionGate.view = 'idea';
-              }}
-            >
-            + Nueva canción
+          <button
+            class="ghost"
+            onclick={() => {
+              sessionGate.view = 'songs';
+              void loadSongs();
+            }}
+          >
+            Canciones
+          </button>
+          <button
+            class="primary"
+            onclick={() => {
+              idea = '';
+              sessionName = '';
+              sessionGate.view = 'idea';
+            }}
+          >
+            + Nueva
           </button>
         </div>
+        {/if}
+      {:else if sessionGate.view === 'songs'}
+        <div class="toolbar">
+          <div>
+            <h2>Tus canciones</h2>
+            <p>Biblioteca y playlists. Ábrelas en el editor o extrae stems.</p>
+          </div>
+          <button class="ghost" onclick={() => (sessionGate.view = 'home')}>Volver</button>
+        </div>
+        <input bind:value={songQuery} placeholder="Buscar canción, género o letra…" />
+        <div class="tabs">
+          <button
+            class="tab"
+            class:on={selectedPlaylistId === 'library'}
+            onclick={() => (selectedPlaylistId = 'library')}
+          >
+            Biblioteca ({library.length})
+          </button>
+          {#each playlists as playlist (playlist.id)}
+            <button
+              class="tab"
+              class:on={selectedPlaylistId === playlist.id}
+              onclick={() => (selectedPlaylistId = playlist.id)}
+            >
+              {playlist.name} ({playlist.tracks.length})
+            </button>
+          {/each}
+        </div>
+        {#if songsLoading}
+          <p class="notice">Cargando canciones…</p>
+        {:else if songsError}
+          <p class="warn">{songsError}</p>
+          <button class="ghost" onclick={() => void loadSongs()}>Reintentar</button>
+        {:else}
+          <div class="list songs">
+            {#each visibleSongs as song (song.id)}
+              <div class="song-row">
+                {#if song.imageUrl}
+                  <img src={song.imageUrl} alt="" />
+                {:else}
+                  <div class="art-fallback">Q</div>
+                {/if}
+                <div class="song-meta">
+                  <strong>{song.title}</strong>
+                  <em>{song.genre || 'Sin género'}{song.isInstrumental ? ' · instrumental' : ''}</em>
+                </div>
+                <div class="song-actions">
+                  <button
+                    class="ghost"
+                    disabled={launchingId === song.id}
+                    onclick={() => void openSong(song, false)}
+                  >
+                    Abrir
+                  </button>
+                  <button
+                    class="primary"
+                    disabled={launchingId === song.id}
+                    onclick={() => void openSong(song, true)}
+                  >
+                    {launchingId === song.id ? '…' : 'Stems'}
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <p class="notice">No hay canciones en esta lista.</p>
+            {/each}
+          </div>
         {/if}
       {:else if sessionGate.view === 'list' || sessionGate.view === 'open'}
         <div class="toolbar">
@@ -153,8 +324,15 @@
         <div class="list">
           {#each filtered as item (item.name)}
             <button class="last" onclick={() => openExisting(item)}>
-              <strong>{item.name}</strong>
-              <em>{item.idea}{item.tempo ? ` · ${item.tempo} BPM` : ''}</em>
+              <span class="row-main">
+                {#if item.imageUrl}
+                  <img class="thumb" src={item.imageUrl} alt="" />
+                {/if}
+                <span>
+                  <strong>{item.name}</strong>
+                  <em>{item.idea}{item.tempo ? ` · ${item.tempo} BPM` : ''}{item.musicId ? ' · biblioteca' : ''}</em>
+                </span>
+              </span>
             </button>
           {/each}
           {#if !filtered.length}
@@ -202,10 +380,11 @@
   .gate {
     position: absolute;
     inset: 0;
-    z-index: 50;
+    z-index: 90;
     display: grid;
     place-items: center;
     padding: 24px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     background:
       radial-gradient(circle at 50% 38%, rgba(8, 12, 26, 0.35), rgba(3, 5, 10, 0.78) 70%),
       var(--bg-window);
@@ -218,6 +397,10 @@
     border-radius: 24px;
     background: rgba(19, 19, 19, 0.92);
     box-shadow: 0 35px 110px rgba(0, 0, 0, 0.74), 0 0 65px rgba(104, 72, 220, 0.18);
+  }
+
+  .card.wide {
+    width: min(720px, 100%);
   }
 
   header {
@@ -265,6 +448,26 @@
   .last {
     border-color: rgba(201, 160, 255, 0.28);
     background: rgba(201, 160, 255, 0.08);
+  }
+
+  .row-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .row-main .thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex: none;
+  }
+
+  .row-main strong,
+  .row-main em {
+    display: block;
   }
 
   .last span,
@@ -324,11 +527,84 @@
     font-size: 13px;
   }
 
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .tab {
+    border: 1px solid var(--stroke);
+    border-radius: 999px;
+    padding: 8px 12px;
+    background: var(--bg-control);
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .tab.on {
+    border-color: transparent;
+    background: linear-gradient(90deg, #7c3aed, var(--accent-strong));
+    color: white;
+  }
+
   .list {
     display: grid;
     gap: 8px;
     max-height: 300px;
     overflow: auto;
+  }
+
+  .list.songs {
+    max-height: 360px;
+  }
+
+  .song-row {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid rgba(201, 160, 255, 0.2);
+    border-radius: 14px;
+    background: rgba(201, 160, 255, 0.06);
+  }
+
+  .song-row img,
+  .art-fallback {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    object-fit: cover;
+  }
+
+  .art-fallback {
+    display: grid;
+    place-items: center;
+    background: #222;
+    color: #3ae0d5;
+    font-weight: 800;
+  }
+
+  .song-meta strong,
+  .song-meta em {
+    display: block;
+  }
+
+  .song-meta strong {
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  .song-meta em {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .song-actions {
+    display: flex;
+    gap: 6px;
   }
 
   .ghost,
@@ -340,6 +616,12 @@
     color: var(--text-secondary);
   }
 
+  .song-actions .ghost,
+  .song-actions .primary {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
   .primary {
     border: 0;
     background: linear-gradient(90deg, #7c3aed, var(--accent-strong));
@@ -347,7 +629,8 @@
     font-weight: 750;
   }
 
-  .primary:disabled {
+  .primary:disabled,
+  .ghost:disabled {
     opacity: 0.4;
   }
 

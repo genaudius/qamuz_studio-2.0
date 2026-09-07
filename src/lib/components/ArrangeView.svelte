@@ -14,6 +14,7 @@
   import TimelineRuler from './TimelineRuler.svelte';
   import TrackHeader from './TrackHeader.svelte';
   import TrackLane from './TrackLane.svelte';
+  import SongContextBadge from './SongContextBadge.svelte';
   import { chooseAudioFiles, importAudioPath, isAudioPath } from '$lib/audio/import';
   import {
     chooseSessionFiles,
@@ -315,7 +316,6 @@
 
 <section
   class="arrange"
-  role="region"
   aria-label="Arrange"
   ondragenter={onFileDragEnter}
   ondragover={onFileDragOver}
@@ -379,6 +379,8 @@
       </select>
     </div>
 
+    <SongContextBadge variant="header" />
+
     <div class="header-scroll" bind:this={headerPane}>
       {#each tracks as track, index (track.id)}
         <TrackHeader
@@ -427,6 +429,7 @@
   >
     <div class="canvas" style:width="{contentWidth}px">
       <TimelineRuler width={contentWidth} height={RULER_HEIGHT} {scrollLeft} {viewWidth} />
+      <SongContextBadge variant="lane" />
 
       <div class="stack" style:height="{Math.max(stackHeight, 1)}px">
         <LaneGrid width={contentWidth} height={Math.max(stackHeight, 1)} {rowEdges} {scrollLeft} {viewWidth} />
