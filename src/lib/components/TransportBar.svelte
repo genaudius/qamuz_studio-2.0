@@ -12,7 +12,7 @@
   import UserMenu from './UserMenu.svelte';
   import { engine, projectStore, transport, workspace } from '$lib/stores';
   import { formatBarsBeats, formatClock, PPQ_PRESETS, secondsToBeats } from '$lib/core/time';
-  import { persistDawSession } from '$lib/persistence/daw-db';
+  import { persistDawSession, persistFullSession } from '$lib/persistence/daw-db';
   import { confirmRenameDespiteDuplicate } from '$lib/persistence/session-duplicates';
   import {
     currentStudioSession,
@@ -47,13 +47,13 @@
     queueMicrotask(() => nameInput?.select());
   }
 
-  function commitName() {
+  async function commitName() {
     const next = nameText.trim();
     editingName = false;
     if (!next || next === projectStore.project.name) return;
     const except = currentStudioSession.record?.name;
     if (isDuplicateSessionTitle(next, except)) {
-      if (!confirmRenameDespiteDuplicate(next, except)) {
+      if (!(await confirmRenameDespiteDuplicate(next, except))) {
         nameText = projectStore.project.name;
         return;
       }
@@ -65,13 +65,16 @@
       documentStatus.message = `“${next}” ya estaba en el historial; guardé esta sesión como “${saved.name}”.`;
       documentStatus.tone = 'idle';
     }
-    void persistDawSession();
+    void persistFullSession().catch((error) => {
+      console.warn(error);
+      void persistDawSession();
+    });
   }
 
   function onNameKey(event: KeyboardEvent) {
     if (event.key === 'Enter') {
       event.preventDefault();
-      commitName();
+      void commitName();
     } else if (event.key === 'Escape') editingName = false;
   }
 
@@ -344,7 +347,7 @@
         bind:value={nameText}
         class="name-input"
         aria-label="Nombre de la sesión"
-        onblur={commitName}
+        onblur={() => void commitName()}
         onkeydown={onNameKey}
       />
     {:else}

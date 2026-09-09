@@ -8,6 +8,7 @@
 
 import { isTauri } from '$lib/persistence/tauri';
 import { projectStore } from '$lib/stores';
+import { studioNotice } from '$lib/ui/studio-notice.svelte';
 
 export const QAMUZ_SAAS_HOME = 'https://qamuz.ai/';
 export const QAMUZ_SAAS_DEV_HOME = 'http://localhost:5173/';
@@ -25,6 +26,22 @@ export function isEmbedded(): boolean {
   } catch {
     return true;
   }
+}
+
+/** Studio hosted on its own origin (qamuz.studio) with a same-origin BFF. */
+export function isStandaloneStudio(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (import.meta.env.VITE_STUDIO_STANDALONE === '1') return true;
+  const host = window.location.hostname;
+  return (
+    host === 'qamuz.studio' ||
+    host === 'www.qamuz.studio' ||
+    host.endsWith('.qamuz.studio')
+  );
+}
+
+export function canUseCloudApis(): boolean {
+  return isEmbedded() || isStandaloneStudio() || import.meta.env.DEV;
 }
 
 function isTrustedSaasOrigin(origin: string): boolean {
@@ -91,9 +108,13 @@ export function saasHomeUrl(): string {
 /** Leave Studio and open the QAMUZ AI home. */
 export async function goHome(): Promise<void> {
   if (projectStore.isDirty) {
-    const proceed = window.confirm(
-      'Hay cambios sin guardar. ¿Volver a QAMUZ AI de todas formas?'
-    );
+    const proceed = await studioNotice.confirm({
+      title: 'Hay cambios sin guardar',
+      description: 'Si sales ahora, puedes perder edits recientes. ¿Volver a QAMUZ AI de todas formas?',
+      tone: 'warning',
+      confirmLabel: 'Salir',
+      cancelLabel: 'Seguir aquí'
+    });
     if (!proceed) return;
   }
 
@@ -140,7 +161,20 @@ export async function signOutOfSaas(): Promise<void> {
     }
     return;
   }
+  if (isStandaloneStudio() || import.meta.env.DEV) {
+    try {
+      await fetch('/api/auth/sign-out', { method: 'POST', credentials: 'include' });
+    } catch {
+      // Cookie may already be gone.
+    }
+    window.location.assign('/api/auth/login');
+    return;
+  }
   await goToSaasPath('login');
+}
+
+export function studioLoginUrl(): string {
+  return '/api/auth/login';
 }
 
 /** Open a SaaS route such as /pricing from Studio. */

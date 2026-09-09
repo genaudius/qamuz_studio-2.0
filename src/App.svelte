@@ -27,6 +27,7 @@
   import TransportBar from '$lib/components/TransportBar.svelte';
   import WorkOverlay from '$lib/components/WorkOverlay.svelte';
   import VRackPanel from '$lib/components/VRackPanel.svelte';
+  import NoticeDialog from '$lib/components/NoticeDialog.svelte';
   import { listenForAccount } from '$lib/account.svelte';
   import { importAudioFromUrl } from '$lib/audio/import';
   import { openMixSessionFromSong, openStemSessionFromSong } from '$lib/audio/open-stems-session';
@@ -103,6 +104,23 @@
         });
         return;
       }
+
+      // Metadata/cover survived but project+stems did not — recover from library.
+      if (session.musicId) {
+        try {
+          await openStemSessionFromSong({
+            musicId: session.musicId,
+            session: session.title || session.name,
+            idea: session.idea,
+            bpm: session.tempo,
+            imageUrl: session.imageUrl,
+            recover: true
+          });
+          return;
+        } catch (error) {
+          console.warn('recover stems failed', error);
+        }
+      }
     }
 
     const keepStems = arrangeHasAudio();
@@ -175,17 +193,17 @@
           // Song/stems launch → arrange first; Maestro stays closed so it can't hide the editor.
           projectStore.showAI = false;
           workspace.open('arrange');
+          const payload = {
+            musicId: launch.musicId,
+            session: launch.session,
+            idea: launch.idea,
+            genre: launch.genre,
+            instrumental: launch.instrumental,
+            bpm: launch.bpm,
+            imageUrl: launch.imageUrl || undefined,
+            forceNew: launch.forceNew
+          };
           try {
-            const payload = {
-              musicId: launch.musicId,
-              session: launch.session,
-              idea: launch.idea,
-              genre: launch.genre,
-              instrumental: launch.instrumental,
-              bpm: launch.bpm,
-              imageUrl: launch.imageUrl || undefined,
-              forceNew: launch.forceNew
-            };
             if (launch.extractStems) {
               await openStemSessionFromSong(payload);
             } else {
@@ -479,6 +497,7 @@
 
     <StatusBar {booting} />
     <WorkOverlay />
+    <NoticeDialog />
     <HelpOverlay />
     {#if sessionGate.visible && workspace.module !== 'settings' && workspace.module !== 'export' && workspace.module !== 'mastering' && workspace.module !== 'analysis'}
       <SessionGate onOpen={openMaestroSession} />

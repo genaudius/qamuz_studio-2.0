@@ -5,6 +5,7 @@
  */
 
 import { readPlanTier, type PlanTier } from './entitlement';
+import { isStandaloneStudio } from './saas';
 
 export type StudioAccount = {
   name: string;
@@ -66,5 +67,26 @@ export function listenForAccount(): () => void {
     });
   };
   window.addEventListener('message', onMessage);
+
+  if (isStandaloneStudio() || import.meta.env.DEV) {
+    void fetch('/api/auth/me', { credentials: 'include' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        const user = body?.user as { name?: string; email?: string; plan?: string } | undefined;
+        if (!user) return;
+        const plan = String(user.plan ?? 'free').toLowerCase();
+        account.apply({
+          name: user.name ?? '',
+          email: user.email ?? '',
+          plan: (['free', 'starter', 'pro', 'advanced', 'premium'].includes(plan)
+            ? plan
+            : 'free') as PlanTier
+        });
+      })
+      .catch(() => {
+        // Offline / no session yet.
+      });
+  }
+
   return () => window.removeEventListener('message', onMessage);
 }

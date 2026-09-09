@@ -12,6 +12,7 @@ import {
   upsertSession
 } from '$lib/persistence/sessions.svelte';
 import { projectStore, workspace } from '$lib/stores';
+import { studioNotice } from '$lib/ui/studio-notice.svelte';
 
 export type DuplicateHit = {
   session: StudioSession;
@@ -56,32 +57,67 @@ export async function confirmReuseExportedSession(
   actionLabel = 'extraer de nuevo'
 ): Promise<'reopened' | 'force' | 'cancel'> {
   const name = hit.session.title || hit.session.name;
-  const openExisting = window.confirm(
-    `“${name}” ${reasonLabel(hit.reason)}.\n\n` +
-      `Aceptar = abrir la sesión existente (recomendado).\n` +
-      `Cancelar = otras opciones.`
-  );
+  const openExisting = await studioNotice.confirm({
+    title: `“${name}” ya está en el DAW`,
+    description: `${reasonLabel(hit.reason)}. ¿Abrir la sesión existente?`,
+    tone: 'warning',
+    confirmLabel: 'Abrir existente',
+    cancelLabel: 'Otras opciones'
+  });
   if (!openExisting) {
-    const force = window.confirm(
-      `¿${actionLabel.charAt(0).toUpperCase()}${actionLabel.slice(1)} creando una copia de “${name}”?`
-    );
+    const force = await studioNotice.confirm({
+      title: '¿Crear una copia?',
+      description: `Puedes ${actionLabel} creando una copia de “${name}”.`,
+      tone: 'info',
+      confirmLabel: 'Crear copia',
+      cancelLabel: 'Cancelar'
+    });
     return force ? 'force' : 'cancel';
   }
 
   const { restoreStoredSession, documentStatus } = await import('$lib/persistence/documents.svelte');
   const restored = await restoreStoredSession(hit.session.name);
-  upsertSession(hit.session);
-  workspace.open('arrange');
-  projectStore.showAI = false;
-  documentStatus.message = restored
-    ? `Abrí “${name}” desde el historial (ya estaba en el DAW).`
-    : `“${name}” ya estaba en el historial. Ábrela desde Sesiones si faltan stems.`;
-  documentStatus.tone = 'success';
-  return 'reopened';
+  if (restored) {
+    upsertSession(hit.session);
+    workspace.open('arrange');
+    projectStore.showAI = false;
+    documentStatus.message = `Abrí “${name}” desde el historial (ya estaba en el DAW).`;
+    documentStatus.tone = 'success';
+    return 'reopened';
+  }
+
+  if (hit.session.musicId) {
+    const recover = await studioNotice.confirm({
+      title: 'No encontré los stems guardados',
+      description: `“${name}” está en el historial pero sin audio. ¿Volver a cargarlos desde la biblioteca?`,
+      tone: 'warning',
+      confirmLabel: 'Recargar stems',
+      cancelLabel: 'Cancelar'
+    });
+    if (recover) {
+      const { openStemSessionFromSong } = await import('$lib/audio/open-stems-session');
+      await openStemSessionFromSong({
+        musicId: hit.session.musicId,
+        session: hit.session.title || hit.session.name,
+        idea: hit.session.idea,
+        bpm: hit.session.tempo,
+        imageUrl: hit.session.imageUrl,
+        recover: true
+      });
+      return 'reopened';
+    }
+  }
+
+  documentStatus.message = `No pude abrir los stems de “${name}”. Prueba extraer de nuevo.`;
+  documentStatus.tone = 'error';
+  return 'cancel';
 }
 
 /** Soft title-only warning when renaming (does not block unless user cancels). */
-export function confirmRenameDespiteDuplicate(title: string, exceptName?: string): boolean {
+export async function confirmRenameDespiteDuplicate(
+  title: string,
+  exceptName?: string
+): Promise<boolean> {
   const existing = loadSessions().find((item) => {
     if (exceptName && item.name.toLocaleLowerCase('es') === exceptName.toLocaleLowerCase('es')) {
       return false;
@@ -93,10 +129,13 @@ export function confirmRenameDespiteDuplicate(title: string, exceptName?: string
     );
   });
   if (!existing) return true;
-  return window.confirm(
-    `Ya existe una sesión llamada “${existing.title || existing.name}”.\n\n` +
-      `¿Usar este título de todas formas? (puede confundir el historial)`
-  );
+  return studioNotice.confirm({
+    title: 'Título duplicado',
+    description: `Ya existe una sesión llamada “${existing.title || existing.name}”. ¿Usar este título de todas formas?`,
+    tone: 'warning',
+    confirmLabel: 'Usar de todas formas',
+    cancelLabel: 'Cancelar'
+  });
 }
 
 export function matchFingerprintInHistory(

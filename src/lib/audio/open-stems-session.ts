@@ -39,6 +39,8 @@ export interface StemSessionLaunch {
   imageUrl?: string;
   /** Skip duplicate dialog (user already chose "crear copia"). */
   forceNew?: boolean;
+  /** Re-load stems into the same session name after a failed local restore. */
+  recover?: boolean;
 }
 
 interface RemoteStem {
@@ -141,7 +143,7 @@ async function guardAgainstDuplicate(
   fingerprint: string | undefined,
   actionLabel: string
 ): Promise<boolean> {
-  if (launch.forceNew) return false;
+  if (launch.forceNew || launch.recover) return false;
   const hit = findExportedSong({
     musicId: launch.musicId,
     fingerprint,
@@ -158,6 +160,7 @@ async function guardAgainstDuplicate(
 }
 
 function sessionTitleForLaunch(launch: StemSessionLaunch, preferred: string): string {
+  if (launch.recover) return preferred;
   if (launch.forceNew) {
     return availableName(preferred, launch.idea || preferred, loadSessions());
   }
@@ -165,11 +168,11 @@ function sessionTitleForLaunch(launch: StemSessionLaunch, preferred: string): st
 }
 
 async function saveSessionToHistory(): Promise<void> {
-  try {
-    await persistFullSession();
-  } catch (error) {
-    console.warn('persistFullSession after stems/mix', error);
-  }
+  const saved = await persistFullSession();
+  setStatus(
+    `Guardé “${saved.name}” en el historial (${saved.audioFiles} audio${saved.audioFiles === 1 ? '' : 's'}).`,
+    'success'
+  );
 }
 
 /** Load the Create Music mix onto one audio track. Maestro stays idle. */
@@ -234,7 +237,16 @@ export async function openMixSessionFromSong(launch: StemSessionLaunch): Promise
       prompt: launch.idea,
       buffer: mix
     });
-    await saveSessionToHistory();
+    try {
+      await saveSessionToHistory();
+    } catch (error) {
+      setStatus(
+        `Mezcla lista, pero no se guardó en el historial: ${(error as Error).message}`,
+        'error'
+      );
+      workProgress.stop();
+      return;
+    }
     setStatus(
       snap
         ? `Sesión “${title}” · ${snap.bpm} BPM · ${snap.entryPosition} @ ${snap.entrySeconds.toFixed(3)} s`
@@ -429,7 +441,26 @@ export async function openStemSessionFromSong(launch: StemSessionLaunch): Promis
     }
 
     patchCurrentSession({ audioFingerprint: fingerprint, musicId: launch.musicId, imageUrl: cover });
-    await saveSessionToHistory();
+    try {
+      await saveSessionToHistory();
+    } catch (error) {
+      setStatus(
+        `Stems listos en el editor, pero no se guardaron: ${(error as Error).message}`,
+        'error'
+      );
+      workProgress.stop();
+      window.dispatchEvent(
+        new CustomEvent('qamuz:stems-imported', {
+          detail: {
+            folderName: title,
+            summary: `Sesión “${title}”: stems en el arrange, pero falló el guardado del historial.`,
+            autoMix: false,
+            tempo: bpm
+          }
+        })
+      );
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent('qamuz:stems-imported', {
         detail: {

@@ -1,9 +1,51 @@
 /**
- * Same-origin SaaS APIs from the Studio iframe, via the parent page.
- * Desktop / local vite falls back to IndexedDB so history still works.
+ * Studio APIs: same-origin BFF on qamuz.studio, or postMessage through
+ * the SaaS iframe parent. Desktop without BFF falls back to IndexedDB.
  */
 
 import { isEmbedded } from './saas';
+
+async function fetchSameOrigin(options: {
+  path: string;
+  method?: string;
+  json?: unknown;
+  file?: SaasFilePart;
+  fields?: Record<string, string>;
+  bytes?: ArrayBuffer;
+  contentType?: string;
+}): Promise<SaasApiResult> {
+  try {
+    const method = options.method ?? 'GET';
+    let body: BodyInit | undefined;
+    const headers = new Headers();
+    if (options.file) {
+      const form = new FormData();
+      form.append('file', new Blob([options.file.bytes], { type: options.file.type }), options.file.name);
+      for (const [key, value] of Object.entries(options.fields || {})) form.append(key, value);
+      body = form;
+    } else if (options.bytes) {
+      headers.set('Content-Type', options.contentType || 'application/octet-stream');
+      body = options.bytes;
+    } else if (options.json !== undefined) {
+      headers.set('Content-Type', 'application/json');
+      body = JSON.stringify(options.json);
+    }
+    const response = await fetch(options.path, {
+      method,
+      headers,
+      body,
+      credentials: 'include',
+    });
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return { status: response.status, json: await response.json(), contentType };
+    }
+    const bytes = await response.arrayBuffer();
+    return { status: response.status, bytes, contentType };
+  } catch (error) {
+    return { status: 0, error: error instanceof Error ? error.message : 'network' };
+  }
+}
 
 export interface SaasApiResult {
   status: number;
@@ -52,9 +94,11 @@ export async function saasApi(options: {
   json?: unknown;
   file?: SaasFilePart;
   fields?: Record<string, string>;
+  bytes?: ArrayBuffer;
+  contentType?: string;
 }): Promise<SaasApiResult> {
   if (!isEmbedded()) {
-    return { status: 0, error: 'not-embedded' };
+    return fetchSameOrigin(options);
   }
 
   ensureListener();

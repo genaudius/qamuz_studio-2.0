@@ -10,7 +10,7 @@
   import { hydrateDawSessionsFromCloud, listDawSessions, persistDawSession } from '$lib/persistence/daw-db';
   import { currentStudioSession } from '$lib/persistence/sessions.svelte';
   import { patchSettings, settings } from '$lib/persistence/settings.svelte';
-  import { goToSaasPath, isEmbedded, QAMUZ_SAAS_DEV_HOME, QAMUZ_SAAS_HOME } from '$lib/saas';
+  import { canUseCloudApis, goToSaasPath, isEmbedded, isStandaloneStudio, QAMUZ_SAAS_DEV_HOME, QAMUZ_SAAS_HOME } from '$lib/saas';
   import { midiInput, transport } from '$lib/stores';
 
   let supabaseUrl = $state(readAIConfig().supabaseUrl);
@@ -22,7 +22,13 @@
   let modalToken = $state(settings.modalApiToken ?? '');
   let maestroOk = $state<boolean | null>(null);
   let saved = $state(false);
-  let dbStatus = $state(isEmbedded() ? 'SaaS Postgres (sin probar)' : 'IndexedDB local (sin probar)');
+  let dbStatus = $state(
+    isStandaloneStudio()
+      ? 'Neon de Studio (sin probar)'
+      : isEmbedded()
+        ? 'SaaS Postgres (sin probar)'
+        : 'IndexedDB local (sin probar)'
+  );
   let dbBusy = $state(false);
 
   const saasAudioPath = '/audio';
@@ -54,9 +60,13 @@
       await persistDawSession(currentStudioSession.record);
       await hydrateDawSessionsFromCloud();
       const rows = await listDawSessions();
-      const where = isEmbedded()
-        ? 'Postgres del SaaS (tabla daw_session)'
-        : 'IndexedDB local — abre Studio desde qamuz.ai para Postgres';
+      const where = isStandaloneStudio()
+        ? 'Neon de qamuz.studio (studio_session)'
+        : isEmbedded()
+          ? 'Postgres del SaaS (tabla daw_session)'
+          : canUseCloudApis()
+            ? 'BFF local / IndexedDB'
+            : 'IndexedDB local — abre Studio desde qamuz.studio para la nube';
       dbStatus = `${where} · ${rows.length} sesión${rows.length === 1 ? '' : 'es'}`;
     } catch (error) {
       dbStatus = `Error: ${(error as Error).message}`;
@@ -68,13 +78,12 @@
 
 <div class="wrap">
   <h2>Ajustes de conexión</h2>
-  <p class="sub">Maestro habla con GenAudius. Las sesiones del DAW se guardan en la base del SaaS cuando Studio va embebido.</p>
+  <p class="sub">Maestro habla con GenAudius. El historial del DAW vive en la base de qamuz.studio; login y créditos siguen en QAMUZ AI.</p>
 
   <section class="block">
     <h3>Base de datos del DAW</h3>
     <p class="sub">
-      No hay un Postgres dentro del DAW. El audio sigue en el proyecto; nombres de pistas, mezcla e idea van a
-      <code>daw_session</code> en QAMUZ AI.
+      IndexedDB es caché local. En qamuz.studio, proyectos, revisiones y stems van a Neon + R2 del Studio.
     </p>
     <p class="status">{dbStatus}</p>
     <div class="row">
@@ -235,8 +244,5 @@
   }
   button:disabled {
     opacity: 0.5;
-  }
-  code {
-    font-size: 11px;
   }
 </style>

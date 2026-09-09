@@ -270,9 +270,22 @@ export async function restoreStoredSession(name: string): Promise<boolean> {
   if (!stored) return false;
   const ok = await applyOpenedProject(stored.projectJson, `qamuz://session/${name}`);
   if (!ok) return false;
-  await restoreSessionAudio(stored.audio);
+  const loaded = await restoreSessionAudio(stored.audio);
+  const expected = projectStore.project.audioFiles.length;
+  if (expected > 0 && loaded === 0) {
+    report(
+      `“${name}” está en el historial pero sin stems de audio. Vuelve a abrirla desde la canción.`,
+      'error'
+    );
+    return false;
+  }
   projectStore.markSaved(`qamuz://session/${name}`);
-  report(`Abrí “${name}” desde QAMUZ`, 'success');
+  report(
+    loaded
+      ? `Abrí “${name}” desde QAMUZ (${loaded} audio${loaded === 1 ? '' : 's'})`
+      : `Abrí “${name}” desde QAMUZ`,
+    'success'
+  );
   return true;
 }
 
@@ -525,31 +538,69 @@ export async function saveProjectAs(): Promise<boolean> {
 }
 
 export function newProject(options?: { force?: boolean }): void {
-  if (!options?.force && projectStore.isDirty && !confirm('Discard unsaved changes?')) return;
+  const run = () => {
+    transport.stop();
+    projectStore.newProject();
+    transport.bpm = projectStore.project.tempo.bpm;
+    transport.timeSignature = { ...projectStore.project.timeSignature };
+    transport.syncBarOneFromSeconds(0, transport.bpm);
+    transport.setPlayheadBeats(0);
+    report('New project', 'idle');
+  };
 
-  transport.stop();
-  projectStore.newProject();
-  transport.bpm = projectStore.project.tempo.bpm;
-  transport.timeSignature = { ...projectStore.project.timeSignature };
-  transport.syncBarOneFromSeconds(0, transport.bpm);
-  transport.setPlayheadBeats(0);
-  report('New project', 'idle');
+  if (!options?.force && projectStore.isDirty) {
+    void import('$lib/ui/studio-notice.svelte').then(({ studioNotice }) =>
+      studioNotice
+        .confirm({
+          title: '¿Descartar cambios?',
+          description: 'Hay trabajo sin guardar. Si continúas, se perderá.',
+          tone: 'warning',
+          confirmLabel: 'Descartar',
+          cancelLabel: 'Cancelar'
+        })
+        .then((ok) => {
+          if (ok) run();
+        })
+    );
+    return;
+  }
+
+  run();
 }
 
 // --- autosave ---
 
-/** Saves in place every `intervalMs` while the project is dirty and has a path. */
-export function startAutosave(intervalMs = 120_000): () => void {
+/** Saves in place every `intervalMs` while the project is dirty. */
+export function startAutosave(intervalMs = 60_000): () => void {
   const timer = window.setInterval(() => {
     if (!projectStore.isDirty) return;
     if (transport.isRecording) return;
-    void persistFullSession().then(() => {
-      projectStore.markSaved(projectStore.packagePath || `qamuz://session/${projectStore.project.name}`);
-    });
+    void persistFullSession()
+      .then((saved) => {
+        projectStore.markSaved(projectStore.packagePath || `qamuz://session/${saved.name}`);
+      })
+      .catch((error) => {
+        console.warn('autosave failed', error);
+        report(`Autosave: ${(error as Error).message}`, 'error');
+      });
     if (isTauri() && projectStore.packagePath && !projectStore.packagePath.startsWith('qamuz://')) {
       void writePackage(projectStore.packagePath);
     }
   }, intervalMs);
 
-  return () => clearInterval(timer);
+  const flush = () => {
+    if (!projectStore.isDirty) return;
+    void persistFullSession().catch((error) => console.warn('pagehide save failed', error));
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') flush();
+  };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', onVisibility);
+
+  return () => {
+    clearInterval(timer);
+    window.removeEventListener('pagehide', flush);
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 }

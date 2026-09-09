@@ -3,6 +3,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_QAMUZ_SAAS_URL?: string;
+  readonly VITE_STUDIO_STANDALONE?: string;
 }
 
 interface ImportMeta {

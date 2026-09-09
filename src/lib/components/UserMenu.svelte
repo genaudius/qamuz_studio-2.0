@@ -6,7 +6,7 @@
 
   import Icon from './Icon.svelte';
   import { account } from '$lib/account.svelte';
-  import { isEmbedded, goHome, goToSaasPath, signOutOfSaas } from '$lib/saas';
+  import { canUseCloudApis, goHome, goToSaasPath, isEmbedded, signOutOfSaas, studioLoginUrl } from '$lib/saas';
   import { workspace } from '$lib/stores';
 
   let open = $state(false);
@@ -103,7 +103,18 @@
       </button>
 
       <span class="rule"></span>
-      {#if isEmbedded()}
+      {#if isEmbedded() || canUseCloudApis()}
+        {#if !account.email && canUseCloudApis() && !isEmbedded()}
+          <button
+            role="menuitem"
+            onclick={() => {
+              close();
+              window.location.assign(studioLoginUrl());
+            }}
+          >
+            <Icon name="logout" size={12} /> Entrar con QAMUZ AI
+          </button>
+        {/if}
         <button
           role="menuitem"
           class="danger"

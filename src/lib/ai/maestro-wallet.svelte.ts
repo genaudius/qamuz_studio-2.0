@@ -5,7 +5,7 @@
  */
 
 import { saasApi } from '$lib/saas-api';
-import { isEmbedded } from '$lib/saas';
+import { canUseCloudApis } from '$lib/saas';
 
 export type MaestroSpendAction = 'mix' | 'stems' | 'plan' | 'render' | 'edit';
 
@@ -20,10 +20,12 @@ export type SpendResult = {
 
 export const MAESTRO_COSTS: Record<MaestroSpendAction, number> = {
   mix: 1,
-  stems: 2,
+  // Aligned with Kie Vocal Separate (10) + 50% markup → 15
+  stems: 15,
   plan: 1,
-  render: 5,
-  edit: 2
+  // Aligned with Kie Generate Music (12) + 50% markup → 18 (two clips)
+  render: 18,
+  edit: 3
 };
 
 export const LOW_CREDIT_THRESHOLD = 10;
@@ -64,7 +66,7 @@ export class MaestroWallet {
   }
 
   async refresh(): Promise<void> {
-    if (isEmbedded()) {
+    if (canUseCloudApis()) {
       const remote = await saasApi({ path: '/api/studio/maestro-usage', method: 'GET' });
       if (remote.status === 200 && remote.json && typeof remote.json === 'object') {
         const data = remote.json as {

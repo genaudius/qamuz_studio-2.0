@@ -24,13 +24,17 @@ export default defineConfig({
     cors: true,
     headers: {
       'Content-Security-Policy':
-        "frame-ancestors 'self' http://localhost:5173 http://127.0.0.1:5173 http://localhost:5174 http://127.0.0.1:5174 http://localhost:4173 http://127.0.0.1:4173 https://qamuz.ai https://*.qamuz.ai"
+        "frame-ancestors 'self' http://localhost:5173 http://127.0.0.1:5173 http://localhost:5174 http://127.0.0.1:5174 http://localhost:4173 http://127.0.0.1:4173 https://qamuz.ai https://*.qamuz.ai https://qamuz.studio https://*.qamuz.studio"
     },
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
     watch: {
       ignored: ['**/src-tauri/**']
     },
     proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true
+      },
       '/genaudius-api': {
         target: 'http://127.0.0.1:42003',
         changeOrigin: true,
