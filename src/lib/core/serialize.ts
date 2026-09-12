@@ -653,10 +653,12 @@ function decodeEqBand(value: unknown, field: string): EqBand {
 
 function decodeInsert(value: unknown, field: string): InsertSlot {
   const o = obj(value, field);
-  const params: Record<string, number> = {};
+  const params: Record<string, any> = {};
   const raw = o.params && typeof o.params === 'object' ? (o.params as Json) : {};
   for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === 'number') params[k] = v;
+    if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string' || (k === 'eqamuzState' && typeof v === 'object' && v !== null)) {
+      params[k] = v;
+    }
   }
   return {
     id: typeof o.id === 'string' ? o.id : uuidForFile(crypto.randomUUID?.() ?? `${Date.now()}`),

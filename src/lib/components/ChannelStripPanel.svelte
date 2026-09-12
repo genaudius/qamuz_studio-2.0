@@ -9,8 +9,10 @@
     type InsertKind
   } from '$lib/core/channel-fx';
   import { TRACK_COLOR_HEX, type Track } from '$lib/core/track';
-  import { projectStore } from '$lib/stores';
+  import { projectStore, workspace } from '$lib/stores';
   import Icon from './Icon.svelte';
+  import { EQAMUZSuiteContainer } from '$lib/eqamuz';
+  import PresetQuickPicker from '$lib/eqamuz/components/PresetQuickPicker.svelte';
 
   interface Props {
     track: Track;
@@ -22,6 +24,11 @@
   let tab = $state<'eq' | 'dynamics' | 'inserts'>('eq');
   let bandIndex = $state(0);
   let addOpen = $state(false);
+  let quickPickerState = $state<{
+    trackId: string;
+    insertId: string;
+    kind: InsertKind;
+  } | null>(null);
 
   const cp = $derived(track.channelProcess ?? makeChannelProcess());
 
@@ -38,6 +45,9 @@
       if (c.inserts.length >= 4) return;
       c.inserts = [...c.inserts, slot];
     });
+    if (kind === 'eqamuz' || kind.startsWith('eqamuz-')) {
+      quickPickerState = { trackId: track.id, insertId: slot.id, kind };
+    }
     addOpen = false;
     tab = 'inserts';
   }
@@ -52,13 +62,22 @@
       <h2>{track.name}</h2>
       <span>Channel Strip · PROCESS</span>
     </div>
-    <button
-      class="phase"
-      class:on={cp.phaseInvert}
-      onclick={() => patch((c) => (c.phaseInvert = !c.phaseInvert))}
-    >
-      ø Fase
-    </button>
+    <div class="header-right-actions">
+      <button
+        class="eqamuz-trigger-btn"
+        title="Abrir EQAMUZ DSP Suite Rack"
+        onclick={() => workspace.openEqamuz(track.id)}
+      >
+        ⚡ EQAMUZ
+      </button>
+      <button
+        class="phase"
+        class:on={cp.phaseInvert}
+        onclick={() => patch((c) => (c.phaseInvert = !c.phaseInvert))}
+      >
+        ø Fase
+      </button>
+    </div>
   </header>
 
   <div class="body">
@@ -273,7 +292,18 @@
               >
                 {ins.enabled ? 'ON' : 'BYP'}
               </button>
-              <span class="kind">{INSERT_CATALOG.find((x) => x.kind === ins.kind)?.label ?? ins.kind}</span>
+              <button
+                type="button"
+                class="kind kind-btn"
+                title={ins.kind === 'eqamuz' || ins.kind.startsWith('eqamuz-') ? `Presets de ${ins.kind}` : ins.kind}
+                onclick={() => {
+                  if (ins.kind === 'eqamuz' || ins.kind.startsWith('eqamuz-')) {
+                    quickPickerState = { trackId: track.id, insertId: ins.id, kind: ins.kind };
+                  }
+                }}
+              >
+                {INSERT_CATALOG.find((x) => x.kind === ins.kind)?.label ?? ins.kind}
+              </button>
               <button
                 class="remove"
                 onclick={() => patch((c) => (c.inserts = c.inserts.filter((_, j) => j !== i)))}
@@ -281,7 +311,7 @@
                 ×
               </button>
               <div class="params">
-                {#each Object.entries(ins.params) as [key, val]}
+                {#each Object.entries(ins.params).filter(([_, val]) => typeof val === 'number') as [key, val]}
                   <label>
                     <span>{key}</span>
                     <input
@@ -327,7 +357,88 @@
   </div>
 </div>
 
+{#if workspace.eqamuzTrackId === track.id}
+  <div
+    class="eqamuz-modal-overlay"
+    onclick={() => workspace.closeEqamuz()}
+    onkeydown={(e) => e.key === 'Escape' && workspace.closeEqamuz()}
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+  >
+    <div
+      class="eqamuz-modal-frame"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => e.stopPropagation()}
+      role="presentation"
+    >
+      <EQAMUZSuiteContainer
+        trackId={track.id}
+        insertId={workspace.eqamuzTarget?.insertId}
+        moduleKind={workspace.eqamuzTarget?.moduleKind}
+        onClose={() => workspace.closeEqamuz()}
+      />
+    </div>
+  </div>
+{/if}
+
+{#if quickPickerState}
+  <PresetQuickPicker
+    trackId={quickPickerState.trackId}
+    insertId={quickPickerState.insertId}
+    kind={quickPickerState.kind}
+    onClose={() => (quickPickerState = null)}
+    onOpenFullEditor={() => {
+      const s = quickPickerState;
+      quickPickerState = null;
+      if (s) workspace.openEqamuz(s.trackId, s.insertId, s.kind);
+    }}
+  />
+{/if}
+
 <style>
+  .header-right-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .eqamuz-trigger-btn {
+    border: 1px solid rgba(0, 242, 254, 0.4);
+    background: rgba(0, 242, 254, 0.12);
+    color: #00f2fe;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0, 242, 254, 0.2);
+  }
+  .eqamuz-trigger-btn:hover {
+    background: #00f2fe;
+    color: #00373a;
+  }
+  .eqamuz-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .eqamuz-modal-frame {
+    width: 100%;
+    max-width: 1440px;
+    height: 85vh;
+    max-height: 860px;
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 20px rgba(0, 242, 254, 0.25);
+    border: 1px solid rgba(0, 242, 254, 0.3);
+  }
   .strip-panel {
     display: flex;
     flex-direction: column;
@@ -458,6 +569,21 @@
   }
   .kind {
     font-size: 12px;
+  }
+  .kind-btn {
+    background: transparent;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+  }
+  .kind-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--accent, #00f0ff);
   }
   .bypass.off {
     opacity: 0.5;

@@ -7,9 +7,13 @@ import { inferInstrument, trackChannelCount, trackLayoutLabel, type NamedStem } 
 import {
   defaultEqBands,
   makeChannelProcess,
+  makeInsert,
   type ChannelProcess,
-  type EqBand
+  type EqBand,
+  type InsertKind,
+  type InsertSlot
 } from '$lib/core/channel-fx';
+import { FACTORY_PRESETS } from '$lib/eqamuz/registry';
 import { currentStudioSession, patchCurrentSession } from '$lib/persistence/sessions.svelte';
 import { persistDawSession } from '$lib/persistence/daw-db';
 import { projectStore, transport, workspace } from '$lib/stores';
@@ -93,8 +97,25 @@ function band(type: EqBand['type'], freq: number, gainDb: number, q = 1): EqBand
   return { type, freq, gainDb, q, enabled: true };
 }
 
-/** Role recipes calibrated from Limbus AutoMix PROCESS reads (see mix-calibration.ts). */
-function processForRole(role: string, style: MixStyle): ChannelProcess {
+export function makeInsertWithPreset(kind: InsertKind, presetName?: string): InsertSlot | null {
+  const slot = makeInsert(kind);
+  if (!slot) return null;
+  if (presetName && slot.params?.eqamuzState) {
+    const preset = FACTORY_PRESETS.find((p) => p.presetName === presetName);
+    if (preset) {
+      slot.params.activePresetName = preset.presetName;
+      const suite = slot.params.eqamuzState;
+      const targetMap = suite.currentABState === 'A' ? suite.stateA : suite.stateB;
+      if (targetMap && preset.moduleTarget in targetMap) {
+        targetMap[preset.moduleTarget] = JSON.parse(JSON.stringify(preset.parametersPayload));
+      }
+    }
+  }
+  return slot;
+}
+
+/** Role recipes calibrated from Limbus AutoMix PROCESS reads and EQAMUZ DSP suite. */
+export function processForRole(role: string, style: MixStyle): ChannelProcess {
   const cp = makeChannelProcess();
   if (!style.process) return cp;
 
@@ -110,6 +131,8 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     makeupDb: 0
   };
 
+  const inserts: InsertSlot[] = [];
+
   if (role.includes('vocal')) {
     bands[0] = band('lowshelf', 80, -2.5, 0.7);
     bands[1] = band('peaking', 250, -1.2, 1.1);
@@ -118,8 +141,16 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 12000, 1.2, 0.7);
     comp = { enabled: true, thresholdDb: -16, ratio: 3.5, attackMs: 5, releaseMs: 60, makeupDb: 1 };
     sends = { reverb: 0.18, delay: 0.12 };
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'VOCAL_AIR_&_WARMTH');
+    const compMod = makeInsertWithPreset('eqamuz-comp', 'OPTO_VOCAL_LEVELER');
+    if (proEq) inserts.push(proEq);
+    if (compMod) inserts.push(compMod);
+    if (role === 'lead_vocal') {
+      const sat = makeInsertWithPreset('eqamuz-saturator', 'SUBTLE_TAPE_WARMTH');
+      if (sat) inserts.push(sat);
+    }
   } else if (role === 'bass') {
-    // Limbus BASS: B1@60/0, B2@850/+0.8, rest flat; COMP -18/3/10/100
     bands[0] = band('lowshelf', 60, 0, 0.9);
     bands[1] = band('peaking', 850, 0.8, 1);
     bands[2] = band('peaking', 1000, 0, 1);
@@ -127,8 +158,12 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 12000, 0, 0.7);
     comp = { enabled: true, thresholdDb: -18, ratio: 3, attackMs: 10, releaseMs: 100, makeupDb: 0 };
     sends = { reverb: 0.02, delay: 0 };
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'BASS_TIGHT_CLEANUP');
+    const compMod = makeInsertWithPreset('eqamuz-comp', 'SAFE_TRANSPARENT_GLUE');
+    if (proEq) inserts.push(proEq);
+    if (compMod) inserts.push(compMod);
   } else if (role === 'drums') {
-    // Transient-protect: light punch, high thr (Limbus bombo: EQ off, thr 0)
     bands[0] = band('lowshelf', 50, 0.8, 0.7);
     bands[1] = band('peaking', 100, 1.5, 1);
     bands[2] = band('peaking', 400, -1, 1.2);
@@ -136,6 +171,11 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 10000, 0.5, 0.7);
     comp = { enabled: true, thresholdDb: -8, ratio: 4, attackMs: 5, releaseMs: 50, makeupDb: 0 };
     sends = { reverb: 0.08, delay: 0.03 };
+
+    const compMod = makeInsertWithPreset('eqamuz-comp', 'VCA_DRUM_PUNCH');
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'SAFE_FLAT_RESET');
+    if (compMod) inserts.push(compMod);
+    if (proEq) inserts.push(proEq);
   } else if (role === 'percussion') {
     bands[0] = band('lowshelf', 120, -2, 0.7);
     bands[1] = band('peaking', 400, -1, 1);
@@ -144,6 +184,11 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 10000, 1, 0.7);
     comp = { enabled: true, thresholdDb: -12, ratio: 3, attackMs: 5, releaseMs: 50, makeupDb: 0 };
     sends = { reverb: 0.12, delay: 0.04 };
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'SAFE_FLAT_RESET');
+    const compMod = makeInsertWithPreset('eqamuz-comp', 'SAFE_TRANSPARENT_GLUE');
+    if (proEq) inserts.push(proEq);
+    if (compMod) inserts.push(compMod);
   } else if (role.includes('guitar')) {
     bands[0] = band('lowshelf', 90, -2, 0.7);
     bands[1] = band('peaking', 300, -1.5, 1);
@@ -152,6 +197,11 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 9000, 0.5, 0.7);
     comp = { enabled: true, thresholdDb: -18, ratio: 3, attackMs: 10, releaseMs: 100, makeupDb: 0.5 };
     sends = { reverb: 0.12, delay: role === 'lead_guitar' ? 0.16 : 0.08 };
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'SAFE_FLAT_RESET');
+    const sat = makeInsertWithPreset('eqamuz-saturator', 'SUBTLE_TAPE_WARMTH');
+    if (proEq) inserts.push(proEq);
+    if (sat) inserts.push(sat);
   } else if (role === 'keys' || role === 'strings') {
     bands[0] = band('lowshelf', 100, -2, 0.7);
     bands[1] = band('peaking', 400, -1, 1);
@@ -160,10 +210,18 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
     bands[4] = band('highshelf', 11000, 1.5, 0.7);
     comp = { enabled: true, thresholdDb: -20, ratio: 2.5, attackMs: 10, releaseMs: 100, makeupDb: 0 };
     sends = { reverb: 0.28, delay: 0.1 };
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'SAFE_FLAT_RESET');
+    const rev = makeInsertWithPreset('eqamuz-reverb', 'NATURAL_ROOM_AMBIENCE');
+    if (proEq) inserts.push(proEq);
+    if (rev) inserts.push(rev);
   } else {
     bands[0] = band('lowshelf', 70, -1, 0.7);
     bands[3] = band('peaking', 4000, 0.8, 1);
     bands[4] = band('highshelf', 10000, 0.5, 0.7);
+
+    const proEq = makeInsertWithPreset('eqamuz-pro-eq', 'SAFE_FLAT_RESET');
+    if (proEq) inserts.push(proEq);
   }
 
   // Style modulates send depth / vocal presence
@@ -179,6 +237,7 @@ function processForRole(role: string, style: MixStyle): ChannelProcess {
   cp.eq = { enabled: true, bands };
   cp.comp = comp;
   cp.sends = sends;
+  cp.inserts = inserts;
   cp.preGainDb = 0;
   return cp;
 }
@@ -417,6 +476,15 @@ export function mixSession(options?: {
       note: recipe.note,
       channelProcess: recipe.channelProcess
     };
+  });
+
+  moves.forEach((move) => {
+    move.channelProcess?.inserts.forEach((ins) => {
+      if (ins.params?.eqamuzState) {
+        ins.params.eqamuzState.trackId = move.trackId;
+        ins.params.eqamuzState.insertId = ins.id;
+      }
+    });
   });
 
   projectStore.applyMixMoves(

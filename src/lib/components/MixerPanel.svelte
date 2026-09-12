@@ -9,6 +9,7 @@
   import { INSERT_CATALOG, makeChannelProcess, makeFxBuses, makeInsert, type InsertKind } from '$lib/core/channel-fx';
   import { TRACK_COLOR_HEX } from '$lib/core/track';
   import { engine, projectStore, workspace } from '$lib/stores';
+  import PresetQuickPicker from '$lib/eqamuz/components/PresetQuickPicker.svelte';
 
   const tracks = $derived(projectStore.project.tracks);
   const rack = $derived(projectStore.project.vRack.instruments);
@@ -18,6 +19,19 @@
 
   let masterTab = $state<'effects' | 'all' | 'master'>('master');
   let addFor = $state<string | null>(null);
+  let quickPickerState = $state<{
+    trackId: string;
+    insertId: string;
+    kind: InsertKind;
+  } | null>(null);
+
+  const INSERT_CATEGORIES = [
+    'EQ & Dynamics',
+    'Character & Tone',
+    'Time & Space',
+    'Studio Suite',
+    'Classic FX'
+  ] as const;
 
   function meter(id: string): number {
     return engine.meters[id]?.peak ?? 0;
@@ -31,12 +45,21 @@
 
   function closePanel() {
     projectStore.bottomPanel = 'none';
-    if (workspace.module === 'mixer' || workspace.module === 'pianoRoll') workspace.open('arrange');
   }
 
   function openProcess(trackId: string) {
     projectStore.selectTrack(trackId);
     workspace.openChannelStrip(trackId);
+  }
+
+  function openInsertInDevice(trackId: string, insertId: string, kind: string) {
+    projectStore.selectTrack(trackId);
+    workspace.openEqamuz(trackId, insertId, kind);
+    if (projectStore.bottomPanelHeight < 340) {
+      projectStore.bottomPanelHeight = 360;
+    }
+    workspace.open('device');
+    projectStore.bottomPanel = 'device';
   }
 
   function addInsert(trackId: string, kind: InsertKind) {
@@ -47,13 +70,45 @@
       cp.inserts = [...cp.inserts, slot];
     });
     addFor = null;
+    openInsertInDevice(trackId, slot.id, kind);
   }
 </script>
 
 <div class="mixer">
   <div class="panel-title">
-    <Icon name="mixer" size={12} />
-    <span>Mixer</span>
+    <div class="panel-tabs">
+      <button type="button" class="panel-tab-btn active">
+        <Icon name="mixer" size={12} />
+        <span>Mixer</span>
+      </button>
+      <button
+        type="button"
+        class="panel-tab-btn"
+        title="Ver plugins abiertos debajo"
+        onclick={() => {
+          if (projectStore.bottomPanelHeight < 340) {
+            projectStore.bottomPanelHeight = 360;
+          }
+          workspace.open('device');
+          projectStore.bottomPanel = 'device';
+        }}
+      >
+        <span class="tab-badge">⚡</span>
+        <span>Plugins</span>
+      </button>
+      <button
+        type="button"
+        class="panel-tab-btn"
+        title="Abrir Piano Roll"
+        onclick={() => {
+          workspace.open('pianoRoll');
+          projectStore.bottomPanel = 'pianoRoll';
+        }}
+      >
+        <Icon name="pianoroll" size={12} />
+        <span>Piano Roll</span>
+      </button>
+    </div>
     <span class="count">{tracks.length + rack.length} channels</span>
     <button class="panel-close" title="Cerrar mixer" onclick={closePanel}>
       <Icon name="close" size={13} />
@@ -73,16 +128,18 @@
       >
         <span class="strip-color" style:background={TRACK_COLOR_HEX[track.color]}></span>
         <span class="strip-name" title={track.name}>{track.name}</span>
-        <button
-          class="process"
-          title="PROCESS"
-          onclick={(e) => {
-            e.stopPropagation();
-            openProcess(track.id);
-          }}
-        >
-          PROCESS
-        </button>
+        <div class="strip-header-actions">
+          <button
+            class="process"
+            title="PROCESS"
+            onclick={(e) => {
+              e.stopPropagation();
+              openProcess(track.id);
+            }}
+          >
+            PROCESS
+          </button>
+        </div>
         <label class="pre" title="Pre-gain">
           <span>PRE</span>
           <input
@@ -110,31 +167,79 @@
           {cp?.eq.enabled ? 'EQ ON' : 'EQ OFF'}
         </button>
         <div class="inserts">
-          {#each cp?.inserts ?? [] as ins}
-            <span class="ins" class:off={!ins.enabled}>{ins.kind}</span>
+          {#each cp?.inserts ?? [] as ins, slotIdx}
+            <div class="ins-row">
+              <button
+                type="button"
+                class="ins ins-btn"
+                class:off={!ins.enabled}
+                title={`Abrir ${ins.kind} debajo para manipular`}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  openInsertInDevice(track.id, ins.id, ins.kind);
+                }}
+              >
+                <span class="ins-num">{slotIdx + 1}</span>
+                <span class="ins-title">
+                  {ins.kind === 'eqamuz'
+                    ? '⚡ SUITE'
+                    : ins.kind.startsWith('eqamuz-')
+                      ? `⚡ ${ins.kind.replace('eqamuz-', '').toUpperCase()}`
+                      : ins.kind}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="ins-preset-btn"
+                title="Presets rápidos"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  if (ins.kind === 'eqamuz' || ins.kind.startsWith('eqamuz-')) {
+                    quickPickerState = { trackId: track.id, insertId: ins.id, kind: ins.kind };
+                  }
+                }}
+              >
+                ⚡
+              </button>
+            </div>
           {/each}
           {#if (cp?.inserts.length ?? 0) < 4}
             <div class="add-slot">
               <button
+                type="button"
                 class="add"
+                title="Agregar nuevo plugin a la cadena serial"
                 onclick={(e) => {
                   e.stopPropagation();
                   addFor = addFor === track.id ? null : track.id;
                 }}>+ ADD</button
               >
               {#if addFor === track.id}
-                <ul class="menu">
-                  {#each INSERT_CATALOG.filter((i) => i.ready) as item}
-                    <li>
-                      <button
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          addInsert(track.id, item.kind);
-                        }}>{item.label}</button
-                      >
-                    </li>
-                  {/each}
-                </ul>
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div class="menu insert-catalog-menu" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+                  <div class="menu-head">CADENA SERIAL · SLOT {(cp?.inserts.length ?? 0) + 1}</div>
+                  <div class="menu-scroll">
+                    {#each INSERT_CATEGORIES as cat}
+                      {@const items = INSERT_CATALOG.filter((i) => i.ready && i.category === cat)}
+                      {#if items.length > 0}
+                        <div class="cat-header">{cat}</div>
+                        {#each items as item}
+                          <button
+                            type="button"
+                            class="menu-item"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              addInsert(track.id, item.kind);
+                            }}
+                          >
+                            <span class="item-badge">{item.kind.startsWith('eqamuz') ? '⚡' : '◇'}</span>
+                            <span class="item-name">{item.label}</span>
+                          </button>
+                        {/each}
+                      {/if}
+                    {/each}
+                  </div>
+                </div>
               {/if}
             </div>
           {/if}
@@ -345,6 +450,20 @@
   </div>
 </div>
 
+{#if quickPickerState}
+  <PresetQuickPicker
+    trackId={quickPickerState.trackId}
+    insertId={quickPickerState.insertId}
+    kind={quickPickerState.kind}
+    onClose={() => (quickPickerState = null)}
+    onOpenFullEditor={() => {
+      const s = quickPickerState;
+      quickPickerState = null;
+      if (s) openInsertInDevice(s.trackId, s.insertId, s.kind);
+    }}
+  />
+{/if}
+
 <style>
   .mixer {
     display: flex;
@@ -409,6 +528,12 @@
     font-size: 8px;
     color: var(--text-tertiary);
   }
+  .strip-header-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+  }
   .process {
     width: 100%;
     font-size: 8px;
@@ -445,60 +570,202 @@
     background: rgba(0, 174, 239, 0.25);
     color: var(--accent);
   }
+  .panel-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .panel-tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .panel-tab-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .panel-tab-btn.active {
+    background: rgba(0, 242, 254, 0.12);
+    border-color: rgba(0, 242, 254, 0.35);
+    color: #00f2fe;
+  }
+  .tab-badge {
+    color: #00f2fe;
+    font-size: 10px;
+  }
   .inserts {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     width: 100%;
     min-height: 28px;
   }
-  .ins {
-    font-size: 7px;
-    text-transform: uppercase;
-    background: #1e2633;
+  .ins-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .ins-preset-btn {
+    width: 16px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: #1e2636;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 3px;
-    padding: 2px 3px;
+    color: #00f2fe;
+    font-size: 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.12s ease;
+  }
+  .ins-preset-btn:hover {
+    background: rgba(0, 242, 254, 0.2);
+    border-color: #00f2fe;
+  }
+  .ins {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 8px;
+    text-transform: uppercase;
+    background: #181f2b;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    padding: 2px 4px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--text-secondary);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .ins:hover {
+    background: #242e3f;
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fff;
   }
   .ins.off {
-    opacity: 0.4;
+    opacity: 0.35;
+  }
+  .ins-num {
+    font-size: 7.5px;
+    font-weight: 700;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border-radius: 2px;
+    padding: 0 3px;
+    flex-shrink: 0;
+  }
+  .ins-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    font-weight: 600;
   }
   .add {
     width: 100%;
     font-size: 8px;
+    font-weight: 600;
     padding: 3px;
-    border-radius: 3px;
-    background: transparent;
-    border: 1px dashed var(--stroke);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
     color: var(--text-tertiary);
     cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .add:hover {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
   }
   .add-slot {
     position: relative;
   }
-  .menu {
+  .insert-catalog-menu {
     position: absolute;
-    z-index: 20;
+    z-index: 9999;
     left: 0;
-    bottom: 100%;
+    bottom: calc(100% + 4px);
     margin: 0;
-    padding: 4px;
-    list-style: none;
-    background: var(--bg-highest);
-    border: 1px solid var(--stroke);
+    padding: 0;
+    background: #0f131a;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.75);
     border-radius: 6px;
-    min-width: 140px;
+    width: 190px;
+    max-height: 280px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
-  .menu button {
+  .menu-head {
+    padding: 6px 8px;
+    background: #141923;
+    font-size: 8.5px;
+    font-weight: 700;
+    color: #f59e0b;
+    letter-spacing: 0.4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .menu-scroll {
+    overflow-y: auto;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .cat-header {
+    font-size: 8px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    padding: 4px 6px 2px;
+    letter-spacing: 0.5px;
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     width: 100%;
     text-align: left;
     background: transparent;
     border: 0;
-    color: inherit;
-    font-size: 10px;
-    padding: 6px;
+    color: #cbd5e1;
+    font-size: 9.5px;
+    font-weight: 500;
+    padding: 4px 6px;
+    border-radius: 4px;
     cursor: pointer;
+    transition: all 0.1s ease;
+  }
+  .menu-item:hover {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fff;
+  }
+  .item-badge {
+    color: #f59e0b;
+    font-size: 9px;
+  }
+  .item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .strip-buttons {
     display: flex;

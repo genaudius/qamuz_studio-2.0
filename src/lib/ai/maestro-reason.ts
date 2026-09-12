@@ -426,6 +426,44 @@ export function interpretMaestroTurn(text: string): MaestroTurn | null {
     return { kind: 'command', name: 'undo', args: {} };
   }
 
+  if (/\b(haz(me)? la mezcla|mezcla(r)?( la sesion| las pistas| la cancion| el proyecto)?|automix|auto mix)\b/.test(t) || t === 'mezclar' || t === 'mezcla') {
+    return { kind: 'command', name: 'mix_session', args: { prompt: text, skip_confirm: true } };
+  }
+
+  if (/\b(agrega|pon(le)?|inserta(r)?|aplica(r)?)\b/.test(t) && /\b(eq|ecualizador|compresor|comp|saturador|reverb|delay|limiter|limitador)\b/.test(t)) {
+    const track = resolveFocusedTrack(namedTrackHint(text));
+    if (!track) {
+      return { kind: 'answer', message: 'Selecciona la pista a la que quieres agregar el plugin o nómbrala (por ejemplo: “ponle un ecualizador a la voz”).' };
+    }
+    let pluginKind = 'eqamuz-pro-eq';
+    let presetName: string | undefined;
+    const isVocal = track.name.toLowerCase().includes('voz') || inferInstrument(track.name).role.includes('vocal');
+    if (/\b(compresor|comp|dynamics)\b/.test(t)) {
+      pluginKind = 'eqamuz-comp';
+      presetName = isVocal ? 'OPTO_VOCAL_LEVELER' : 'SAFE_TRANSPARENT_GLUE';
+    } else if (/\b(saturador|drive|tape|saturacion|saturación)\b/.test(t)) {
+      pluginKind = 'eqamuz-saturator';
+      presetName = 'SUBTLE_TAPE_WARMTH';
+    } else if (/\b(reverb|espacio|sala)\b/.test(t)) {
+      pluginKind = 'eqamuz-reverb';
+      presetName = 'NATURAL_ROOM_AMBIENCE';
+    } else if (/\b(delay|eco)\b/.test(t)) {
+      pluginKind = 'eqamuz-delay';
+      presetName = 'STEREO_DOTTED_8TH';
+    } else if (/\b(limiter|limitador)\b/.test(t)) {
+      pluginKind = 'eqamuz-limiter';
+      presetName = 'SAFE_TRANSPARENT_CEILING';
+    } else {
+      pluginKind = 'eqamuz-pro-eq';
+      presetName = isVocal ? 'VOCAL_AIR_&_WARMTH' : 'SAFE_FLAT_RESET';
+    }
+    return {
+      kind: 'command',
+      name: 'add_insert',
+      args: { track_name: track.name, plugin_kind: pluginKind, preset_name: presetName }
+    };
+  }
+
   const question = answerSessionQuestion(text);
   if (question) return question;
 

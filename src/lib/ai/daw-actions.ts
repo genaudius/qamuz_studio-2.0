@@ -16,11 +16,13 @@ import { engine, projectStore, transport } from '$lib/stores';
 import { workspace, type StudioModule } from '$lib/stores/workspace.svelte';
 import type { InstrumentName } from '$lib/audio/backend';
 import type { Track } from '$lib/core/track';
+import type { InsertKind } from '$lib/core/channel-fx';
+import { FACTORY_PRESETS } from '$lib/eqamuz/registry';
 import { generateMIDI } from './claude';
 import { isElevenLabsConfigured } from './config';
 import { runAudioFill, runMIDIFill } from './fill';
 import { lastRenderAudioUrl, generateWithMaestro, interpretIdea, type MaestroPlan } from './maestro';
-import { describeSession, mixSession, requestMixSession, confirmMixSession } from './mix-agent';
+import { describeSession, mixSession, requestMixSession, confirmMixSession, makeInsertWithPreset } from './mix-agent';
 import { describeGroove, localPartForSound, transposeNotes } from './local-midi';
 import { trackIsEmpty } from './session-inventory';
 import {
@@ -282,6 +284,67 @@ export async function executeDawAction(
           return { ok: true, message: result.summary };
         }
         return { ok: true, message: result.status };
+      }
+      case 'add_insert': {
+        const track = findTrack(String(args.track_name ?? '')) ?? projectStore.selectedTrack;
+        if (!track) return { ok: false, message: 'Selecciona una pista o especifica su nombre para agregar el plugin.' };
+        const kind = String(args.plugin_kind ?? args.kind ?? 'eqamuz-pro-eq') as InsertKind;
+        const presetName = args.preset_name ? String(args.preset_name) : undefined;
+        const slot = makeInsertWithPreset(kind, presetName);
+        if (!slot) return { ok: false, message: `Plugin “${kind}” no reconocido o no disponible.` };
+        projectStore.updateChannelProcess(track.id, (cp) => {
+          if (cp.inserts.length >= 4) return;
+          if (slot.params?.eqamuzState) {
+            slot.params.eqamuzState.trackId = track.id;
+            slot.params.eqamuzState.insertId = slot.id;
+          }
+          cp.inserts = [...cp.inserts, slot];
+        });
+        projectStore.touchMixer();
+        const presetMsg = presetName ? ` con preset “${presetName}”` : '';
+        return {
+          ok: true,
+          message: `Agregué ${slot.kind.replace('eqamuz-', 'EQAMUZ ').toUpperCase()} a ${track.name}${presetMsg} (Slot ${track.channelProcess?.inserts.length ?? 1}).`
+        };
+      }
+      case 'set_insert_preset': {
+        const track = findTrack(String(args.track_name ?? '')) ?? projectStore.selectedTrack;
+        if (!track) return { ok: false, message: 'Pista no encontrada.' };
+        const presetName = String(args.preset_name ?? '').trim();
+        const preset = FACTORY_PRESETS.find((p) => p.presetName.toLowerCase() === presetName.toLowerCase());
+        if (!preset) return { ok: false, message: `Preset “${presetName}” no encontrado en catálogo.` };
+        let updated = false;
+        projectStore.updateChannelProcess(track.id, (cp) => {
+          const slot = cp.inserts.find((ins) => ins.kind === `eqamuz-${preset.moduleTarget}` || ins.kind === 'eqamuz' || ins.kind === 'eqamuz-suite');
+          if (slot && slot.params?.eqamuzState) {
+            slot.params.activePresetName = preset.presetName;
+            const suite = slot.params.eqamuzState;
+            const targetMap = suite.currentABState === 'A' ? suite.stateA : suite.stateB;
+            if (targetMap && preset.moduleTarget in targetMap) {
+              targetMap[preset.moduleTarget] = JSON.parse(JSON.stringify(preset.parametersPayload));
+              updated = true;
+            }
+          }
+        });
+        projectStore.touchMixer();
+        if (!updated) {
+          return { ok: false, message: `No hay un plugin compatible en ${track.name} para el preset “${preset.presetName}”.` };
+        }
+        return { ok: true, message: `Preset “${preset.presetName}” aplicado a ${track.name}.` };
+      }
+      case 'remove_insert': {
+        const track = findTrack(String(args.track_name ?? '')) ?? projectStore.selectedTrack;
+        if (!track) return { ok: false, message: 'Pista no encontrada.' };
+        const idx = Number(args.insert_index ?? (track.channelProcess?.inserts.length ? track.channelProcess.inserts.length - 1 : -1));
+        if (idx < 0 || !track.channelProcess?.inserts[idx]) {
+          return { ok: false, message: 'No hay inserts para remover en esta pista.' };
+        }
+        const removed = track.channelProcess.inserts[idx];
+        projectStore.updateChannelProcess(track.id, (cp) => {
+          cp.inserts = cp.inserts.filter((_, i) => i !== idx);
+        });
+        projectStore.touchMixer();
+        return { ok: true, message: `Removí ${removed.kind} de ${track.name}.` };
       }
       case 'describe_session':
         return { ok: true, message: describeSession() };
@@ -683,6 +746,25 @@ export function inferDawAction(text: string): { name: string; args: Record<strin
   if (/\b(piano[\s-]?roll|abre(r)? el piano)\b/.test(t) && t.length < 48) return { name: 'show_piano_roll', args: {} };
   if (/\b(master|masteriz)/.test(t) && t.length < 48) return { name: 'show_mastering', args: {} };
   if (/\b(analy|espectro|lufs|medidor)/.test(t) && t.length < 48) return { name: 'show_analysis', args: {} };
+
+  const insertMatch = t.match(
+    /\b(?:agrega\w*|agr[eé]gale|a[ñn]ade\w*|pon\w*|p[oó]ngale|inserta\w*)\b.{0,30}?\b(eq|ecualizador|pro[\s-]?eq|compresor|comp|reverb|reverberaci[oó]n|delay|eco|saturador|saturaci[oó]n|tape|eqamuz)\b(?:\s+(?:a|en|al)\s+(?:la|el)?\s*([a-záéíóúñ0-9_\-\s]{2,20}))?/i
+  );
+  if (insertMatch) {
+    const rawKind = insertMatch[1].toLowerCase();
+    let kind = 'eqamuz-pro-eq';
+    if (/comp/.test(rawKind)) kind = 'eqamuz-comp';
+    else if (/rev/.test(rawKind)) kind = 'eqamuz-reverb';
+    else if (/delay|eco/.test(rawKind)) kind = 'eqamuz-delay';
+    else if (/sat|tape/.test(rawKind)) kind = 'eqamuz-saturator';
+    else if (/suite/.test(rawKind)) kind = 'eqamuz-suite';
+
+    const trackName = insertMatch[2]?.trim();
+    return {
+      name: 'add_insert',
+      args: { kind, ...(trackName ? { trackName } : {}) }
+    };
+  }
 
   const add = t.match(
     /\b(?:añade\w*|anade\w*|agrega\w*|agr[eé]gale|pon\w*|p[oó]ngale|genera\w*|crea\w*)\b.{0,48}\b(piano|bajo|bass|guitarra|requinto|segunda|bongo|bongos|cuerdas|violines|metales|synth|bater[ií]a|drums|tambora|g[uü]ira)\b/

@@ -9,12 +9,63 @@
   import MiniMeter from './MiniMeter.svelte';
   import { INSTRUMENTS, type InstrumentName } from '$lib/audio/backend';
   import { rackInstrumentSound } from '$lib/audio/instruments';
+  import { makeInsert, type InsertKind } from '$lib/core/channel-fx';
   import { engine, projectStore, workspace } from '$lib/stores';
+  import PresetQuickPicker from '$lib/eqamuz/components/PresetQuickPicker.svelte';
 
   const instruments = $derived(projectStore.project.vRack.instruments);
 
   let editingID = $state<string | null>(null);
   let nameDraft = $state('');
+  let quickPickerState = $state<{
+    trackId: string;
+    insertId: string;
+    kind: InsertKind;
+  } | null>(null);
+
+  const targetTrack = $derived(
+    projectStore.project.tracks.find((t) => t.id === projectStore.selectedTrackID) ??
+      projectStore.project.tracks[0]
+  );
+
+  const targetEqamuzInsert = $derived(
+    targetTrack?.channelProcess?.inserts.find(
+      (ins) => ins.kind === 'eqamuz' || ins.kind.startsWith('eqamuz-')
+    )
+  );
+
+  function openRackPresets() {
+    if (!targetTrack) return;
+    if (targetEqamuzInsert) {
+      quickPickerState = {
+        trackId: targetTrack.id,
+        insertId: targetEqamuzInsert.id,
+        kind: targetEqamuzInsert.kind
+      };
+    } else {
+      const slot = makeInsert('eqamuz-pro-eq');
+      if (!slot) return;
+      projectStore.updateChannelProcess(targetTrack.id, (cp) => {
+        if (cp.inserts.length >= 4) return;
+        cp.inserts = [...cp.inserts, slot];
+      });
+      projectStore.touchMixer();
+      quickPickerState = {
+        trackId: targetTrack.id,
+        insertId: slot.id,
+        kind: 'eqamuz-pro-eq'
+      };
+    }
+  }
+
+  function openRackEditor() {
+    if (!targetTrack) return;
+    if (targetEqamuzInsert) {
+      workspace.openEqamuz(targetTrack.id, targetEqamuzInsert.id, targetEqamuzInsert.kind);
+    } else {
+      workspace.openEqamuz(targetTrack.id);
+    }
+  }
 
   function startRename(id: string, current: string) {
     editingID = id;
@@ -63,6 +114,36 @@
     </div>
     <span class="routing">Insert · mastering</span>
   </button>
+
+  <div class="slot plugin eqamuz-rack-slot" class:on={workspace.isEqamuzOpen}>
+    <div class="slot-head">
+      <span class="mark eqamuz-mark">⚡</span>
+      <span class="slot-name">EQAMUZ DSP RACK</span>
+      <span class="led" class:on={Boolean(targetEqamuzInsert?.enabled)}></span>
+    </div>
+    <div class="rack-slot-btns">
+      <button
+        type="button"
+        class="rack-btn presets"
+        title="Abrir selector de presets seguro"
+        onclick={openRackPresets}
+      >
+        <Icon name="sliders" size={11} />
+        <span>Presets</span>
+      </button>
+      <button
+        type="button"
+        class="rack-btn editor"
+        title="Abrir editor completo"
+        onclick={openRackEditor}
+      >
+        <span>Editor</span>
+      </button>
+    </div>
+    <span class="routing">
+      {targetTrack ? `Pista: ${targetTrack.name}` : 'Multi-Insert DSP'}
+    </span>
+  </div>
 
   {#if instruments.length === 0}
     <p class="empty">
@@ -151,6 +232,20 @@
   {/each}
 </div>
 </div>
+
+{#if quickPickerState}
+  <PresetQuickPicker
+    trackId={quickPickerState.trackId}
+    insertId={quickPickerState.insertId}
+    kind={quickPickerState.kind}
+    onClose={() => (quickPickerState = null)}
+    onOpenFullEditor={() => {
+      const s = quickPickerState;
+      quickPickerState = null;
+      if (s) workspace.openEqamuz(s.trackId, s.insertId, s.kind);
+    }}
+  />
+{/if}
 
 <style>
   .rack {
@@ -292,5 +387,63 @@
 
   select {
     font-size: 11px;
+  }
+
+  .eqamuz-rack-slot {
+    border-color: rgba(245, 158, 11, 0.3);
+    background: rgba(245, 158, 11, 0.04);
+  }
+
+  .eqamuz-rack-slot:hover,
+  .eqamuz-rack-slot.on {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+  }
+
+  .eqamuz-mark {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+  }
+
+  .rack-slot-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .rack-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .rack-btn.presets {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+  }
+
+  .rack-btn.presets:hover {
+    background: rgba(245, 158, 11, 0.28);
+    border-color: rgba(245, 158, 11, 0.6);
+  }
+
+  .rack-btn.editor {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+  }
+
+  .rack-btn.editor:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
   }
 </style>

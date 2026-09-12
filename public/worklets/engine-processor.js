@@ -386,6 +386,40 @@ class Biquad {
     this.a2 = a2 / a0;
   }
 
+  setHighpass(freq, q, sampleRate) {
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * Math.max(0.1, q));
+    const cos = Math.cos(w0);
+    const b0 = (1 + cos) / 2;
+    const b1 = -(1 + cos);
+    const b2 = (1 + cos) / 2;
+    const a0 = 1 + alpha;
+    const a1 = -2 * cos;
+    const a2 = 1 - alpha;
+    this.b0 = b0 / a0;
+    this.b1 = b1 / a0;
+    this.b2 = b2 / a0;
+    this.a1 = a1 / a0;
+    this.a2 = a2 / a0;
+  }
+
+  setLowpass(freq, q, sampleRate) {
+    const w0 = (2 * Math.PI * freq) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * Math.max(0.1, q));
+    const cos = Math.cos(w0);
+    const b0 = (1 - cos) / 2;
+    const b1 = 1 - cos;
+    const b2 = (1 - cos) / 2;
+    const a0 = 1 + alpha;
+    const a1 = -2 * cos;
+    const a2 = 1 - alpha;
+    this.b0 = b0 / a0;
+    this.b1 = b1 / a0;
+    this.b2 = b2 / a0;
+    this.a1 = a1 / a0;
+    this.a2 = a2 / a0;
+  }
+
   process(x) {
     const out = this.b0 * x + this.z1;
     this.z1 = this.b1 * x - this.a1 * out + this.z2;
@@ -479,6 +513,7 @@ class Track {
     this.phaserPhase = 0;
     this.delayIns = new DelayLine(Math.floor((typeof sampleRate === 'number' ? sampleRate : 48000) * 0.1));
     this.unmaskEnv = 0;
+    this.eqamuzFx = new Map();
   }
 
   noteOn(note, velocity) {
@@ -554,66 +589,353 @@ class Track {
     return x * gr * makeup;
   }
 
-  #insertSample(x, sampleRate) {
-    let y = x;
+  #processInserts(l, r, sampleRate) {
+    let left = l;
+    let right = r;
     for (const ins of this.inserts) {
       if (!ins.enabled) continue;
       const p = ins.params || {};
+      const eqState = p.eqamuzState;
+      const ab = eqState ? (eqState.currentABState === 'B' ? eqState.stateB : eqState.stateA) : null;
+
       if (ins.kind === 'drive') {
         const drive = 1 + (p.drive ?? 0.35) * 8;
-        const wet = Math.tanh(y * drive) / Math.tanh(drive);
+        const wetL = Math.tanh(left * drive) / Math.tanh(drive);
+        const wetR = Math.tanh(right * drive) / Math.tanh(drive);
         const mix = p.mix ?? 0.45;
-        y = y * (1 - mix) + wet * mix;
+        left = left * (1 - mix) + wetL * mix;
+        right = right * (1 - mix) + wetR * mix;
       } else if (ins.kind === 'tubeEq') {
         const low = ((p.low ?? 0.55) - 0.5) * 12;
         const mid = ((p.mid ?? 0.5) - 0.5) * 8;
         const high = ((p.high ?? 0.58) - 0.5) * 10;
         const drive = 1 + (p.drive ?? 0.25) * 3;
-        y = Math.tanh(y * drive);
-        // crude tone tilt
-        y = y * (1 + mid * 0.05) + Math.sign(y) * Math.abs(y) * 0.02 * high + y * 0.03 * low;
+        const satL = Math.tanh(left * drive);
+        const satR = Math.tanh(right * drive);
+        left = satL * (1 + mid * 0.05) + Math.sign(satL) * Math.abs(satL) * 0.02 * high + satL * 0.03 * low;
+        right = satR * (1 + mid * 0.05) + Math.sign(satR) * Math.abs(satR) * 0.02 * high + satR * 0.03 * low;
       } else if (ins.kind === 'chorus') {
         this.chorusPhase += ((0.1 + (p.rate ?? 0.35) * 2) * Math.PI * 2) / sampleRate;
         const depth = 0.002 + (p.depth ?? 0.4) * 0.008;
         const delaySamples = (0.012 + Math.sin(this.chorusPhase) * depth) * sampleRate;
-        this.delayIns.write(y);
+        this.delayIns.write((left + right) * 0.5);
         const wet = this.delayIns.read(delaySamples);
         const mix = p.mix ?? 0.35;
-        y = y * (1 - mix) + wet * mix;
+        left = left * (1 - mix) + wet * mix;
+        right = right * (1 - mix) + wet * mix;
       } else if (ins.kind === 'phaser') {
         this.phaserPhase += ((0.05 + (p.rate ?? 0.3) * 1.5) * Math.PI * 2) / sampleRate;
         const depth = p.depth ?? 0.5;
-        const allpass = y + Math.sin(this.phaserPhase) * depth * 0.5 * y;
+        const allpassL = left + Math.sin(this.phaserPhase) * depth * 0.5 * left;
+        const allpassR = right + Math.sin(this.phaserPhase + 0.5) * depth * 0.5 * right;
         const mix = p.mix ?? 0.4;
-        y = y * (1 - mix) + allpass * mix;
+        left = left * (1 - mix) + allpassL * mix;
+        right = right * (1 - mix) + allpassR * mix;
       } else if (ins.kind === 'doubler') {
         const delayMs = 8 + (p.delayMs ?? 0.35) * 24;
-        this.delayIns.write(y);
+        this.delayIns.write((left + right) * 0.5);
         const wet = this.delayIns.read((delayMs / 1000) * sampleRate);
         const width = p.width ?? 0.55;
         const mix = p.mix ?? 0.4;
-        y = y * (1 - mix) + wet * mix * (0.7 + width * 0.3);
+        left = left * (1 - mix) + wet * mix * (0.7 + width * 0.3);
+        right = right * (1 - mix) + wet * mix * (0.7 - width * 0.3);
       } else if (ins.kind === 'room') {
-        // Lightweight one-pole + delay smear as insert room
-        this.delayIns.write(y);
+        this.delayIns.write((left + right) * 0.5);
         const size = p.size ?? 0.4;
         const decay = p.decay ?? 0.45;
         const wet =
           this.delayIns.read((0.02 + size * 0.06) * sampleRate) * (0.4 + decay * 0.5) +
           this.delayIns.read((0.035 + size * 0.08) * sampleRate) * 0.25;
         const mix = p.mix ?? 0.25;
-        y = y * (1 - mix) + wet * mix;
+        left = left * (1 - mix) + wet * mix;
+        right = right * (1 - mix) + wet * mix;
       } else if (ins.kind === 'unmask') {
         const thr = p.threshold ?? 0.45;
         const speed = 0.001 + (p.speed ?? 0.4) * 0.02;
-        const level = Math.abs(y);
+        const level = Math.max(Math.abs(left), Math.abs(right));
         this.unmaskEnv += (level - this.unmaskEnv) * speed;
         const duck = this.unmaskEnv > thr * 0.5 ? Math.max(0.55, 1 - (this.unmaskEnv - thr * 0.5)) : 1;
-        // Duck mid band slightly
-        y *= 0.85 + duck * 0.15;
+        left *= 0.85 + duck * 0.15;
+        right *= 0.85 + duck * 0.15;
+      }
+      // --- EQAMUZ REAL DSP PROCESSORS ---
+      else if (ins.kind === 'eqamuz-pro-eq') {
+        const mod = ab?.pro_eq;
+        const out = this.#processEqamuzProEq(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-comp') {
+        const mod = ab?.comp;
+        const out = this.#processEqamuzComp(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-saturator') {
+        const mod = ab?.saturator;
+        const out = this.#processEqamuzSaturator(left, right, mod);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-delay') {
+        const mod = ab?.delay;
+        const out = this.#processEqamuzDelay(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-reverb') {
+        const mod = ab?.reverb;
+        const out = this.#processEqamuzReverb(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-imager') {
+        const mod = ab?.imager;
+        const out = this.#processEqamuzImager(left, right, mod);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-limiter') {
+        const mod = ab?.limiter;
+        const out = this.#processEqamuzLimiter(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-vocal') {
+        const mod = ab?.vocal;
+        const out = this.#processEqamuzVocal(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-lead') {
+        const mod = ab?.lead;
+        const out = this.#processEqamuzLead(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz-electric') {
+        const mod = ab?.electric;
+        const out = this.#processEqamuzElectric(ins.id, left, right, mod, sampleRate);
+        left = out[0];
+        right = out[1];
+      } else if (ins.kind === 'eqamuz' || ins.kind === 'eqamuz-suite') {
+        const out = this.#processEqamuzSuite(ins.id, left, right, ab, sampleRate);
+        left = out[0];
+        right = out[1];
       }
     }
-    return y;
+    return [left, right];
+  }
+
+  #processEqamuzProEq(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    let fx = this.eqamuzFx.get(insId);
+    if (!fx || fx.type !== 'pro_eq') {
+      fx = {
+        type: 'pro_eq',
+        biquadsL: Array.from({ length: 8 }, () => new Biquad()),
+        biquadsR: Array.from({ length: 8 }, () => new Biquad()),
+        lastSig: ''
+      };
+      this.eqamuzFx.set(insId, fx);
+    }
+    const bands = mod?.bands;
+    if (bands && Array.isArray(bands)) {
+      const sig = bands.map((b) => `${b.type}:${b.freqHz}:${b.gainDb}:${b.q}:${b.enabled}`).join('|');
+      if (sig !== fx.lastSig) {
+        fx.lastSig = sig;
+        for (let i = 0; i < 8 && i < bands.length; i += 1) {
+          const b = bands[i];
+          const bqL = fx.biquadsL[i];
+          const bqR = fx.biquadsR[i];
+          if (!b || !b.enabled) continue;
+          const freq = Math.max(20, Math.min(sampleRate * 0.48, b.freqHz || 1000));
+          const gain = b.gainDb || 0;
+          const q = Math.max(0.1, b.q || 0.707);
+          const apply = (bq) => {
+            if (b.type === 'HPF') bq.setHighpass(freq, q, sampleRate);
+            else if (b.type === 'LOW_SHELF') bq.setLowshelf(freq, gain, sampleRate);
+            else if (b.type === 'HIGH_SHELF') bq.setHighshelf(freq, gain, sampleRate);
+            else if (b.type === 'LPF') bq.setLowpass(freq, q, sampleRate);
+            else bq.setPeaking(freq, gain, q, sampleRate);
+          };
+          apply(bqL);
+          apply(bqR);
+        }
+      }
+      let outL = l;
+      let outR = r;
+      for (let i = 0; i < 8 && i < bands.length; i += 1) {
+        const b = bands[i];
+        if (!b || !b.enabled) continue;
+        if (Math.abs(b.gainDb || 0) < 0.01 && (b.type === 'BELL' || b.type === 'BELL_DYNAMIC')) continue;
+        outL = fx.biquadsL[i].process(outL);
+        outR = fx.biquadsR[i].process(outR);
+      }
+      return [outL, outR];
+    }
+    return [l, r];
+  }
+
+  #processEqamuzComp(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    let fx = this.eqamuzFx.get(insId);
+    if (!fx || fx.type !== 'comp') {
+      fx = { type: 'comp', env: 0 };
+      this.eqamuzFx.set(insId, fx);
+    }
+    const thresholdDb = mod?.thresholdDb ?? -18;
+    const ratio = Math.max(1, mod?.ratio ?? 4);
+    const attackMs = Math.max(0.1, mod?.attackMs ?? 12);
+    const releaseMs = Math.max(5, mod?.releaseMs ?? 140);
+    const makeupDb = mod?.makeupDb ?? 0;
+    const mix = mod?.mix !== undefined ? mod.mix : 1.0;
+
+    const thrLinear = Math.pow(10, thresholdDb / 20);
+    const atk = Math.exp(-1 / (sampleRate * (attackMs / 1000)));
+    const rel = Math.exp(-1 / (sampleRate * (releaseMs / 1000)));
+    const level = Math.max(Math.abs(l), Math.abs(r));
+
+    if (level > fx.env) fx.env = atk * fx.env + (1 - atk) * level;
+    else fx.env = rel * fx.env + (1 - rel) * level;
+
+    let gr = 1.0;
+    if (fx.env > thrLinear) {
+      const over = fx.env / thrLinear;
+      gr = Math.pow(over, 1 / ratio - 1);
+    }
+    const makeupGain = Math.pow(10, makeupDb / 20);
+    const wetL = l * gr * makeupGain;
+    const wetR = r * gr * makeupGain;
+    return [l * (1 - mix) + wetL * mix, r * (1 - mix) + wetR * mix];
+  }
+
+  #processEqamuzSaturator(l, r, mod) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const driveNorm = mod?.drive ?? 0.35;
+    const drive = 1 + driveNorm * 9;
+    const mode = String(mod?.characterMode || 'TAPE II');
+    const mix = mod?.mix !== undefined ? mod.mix : 1.0;
+    const outGain = Math.pow(10, (mod?.outputGainDb || 0) / 20);
+
+    const saturate = (x) => {
+      let sat = x * drive;
+      if (mode.includes('TAPE')) {
+        sat = Math.tanh(sat);
+      } else if (mode.includes('TUBE')) {
+        sat = sat > 0 ? Math.tanh(sat) : Math.tanh(sat * 1.2) * 0.85;
+      } else if (mode.includes('TRANSISTOR')) {
+        sat = Math.max(-1.0, Math.min(1.0, sat * 1.25)) * 0.85;
+      } else {
+        sat = Math.max(-0.95, Math.min(0.95, sat));
+      }
+      return (sat / Math.tanh(drive)) * outGain;
+    };
+
+    const wetL = saturate(l);
+    const wetR = saturate(r);
+    return [l * (1 - mix) + wetL * mix, r * (1 - mix) + wetR * mix];
+  }
+
+  #processEqamuzDelay(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    let fx = this.eqamuzFx.get(insId);
+    if (!fx || fx.type !== 'delay') {
+      const maxSamples = Math.floor(sampleRate * 2.5);
+      fx = {
+        type: 'delay',
+        lineL: new DelayLine(maxSamples),
+        lineR: new DelayLine(maxSamples)
+      };
+      this.eqamuzFx.set(insId, fx);
+    }
+    const timeMs = mod?.timeMs ?? 250;
+    const delaySamples = Math.floor((timeMs / 1000) * sampleRate);
+    const feedback = Math.max(0, Math.min(0.95, mod?.feedback ?? 0.35));
+    const mix = mod?.mix !== undefined ? mod.mix : 0.4;
+
+    const delayedL = fx.lineL.read(delaySamples);
+    const delayedR = fx.lineR.read(delaySamples);
+
+    fx.lineL.write(l + delayedL * feedback);
+    fx.lineR.write(r + delayedR * feedback);
+
+    return [l * (1 - mix) + delayedL * mix, r * (1 - mix) + delayedR * mix];
+  }
+
+  #processEqamuzReverb(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    let fx = this.eqamuzFx.get(insId);
+    if (!fx || fx.type !== 'reverb') {
+      fx = { type: 'reverb', engine: new SimpleReverb(sampleRate) };
+      this.eqamuzFx.set(insId, fx);
+    }
+    const decay = mod?.decaySec !== undefined ? Math.min(1.0, mod.decaySec / 6.0) : 0.5;
+    const size = mod?.size ?? 0.55;
+    const mix = mod?.mix !== undefined ? mod.mix : 0.35;
+    const wet = fx.engine.process((l + r) * 0.5, size, decay, 0.35);
+    return [l * (1 - mix) + wet * mix, r * (1 - mix) + wet * mix];
+  }
+
+  #processEqamuzImager(l, r, mod) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const width = (mod?.widthPercent !== undefined ? mod.widthPercent : 100) / 100;
+    const mid = (l + r) * 0.5;
+    const side = (l - r) * 0.5 * width;
+    return [mid + side, mid - side];
+  }
+
+  #processEqamuzLimiter(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const inGain = Math.pow(10, (mod?.inputGainDb || 0) / 20);
+    const ceilingDb = mod?.ceilingDb ?? -0.5;
+    const ceilLinear = Math.pow(10, ceilingDb / 20);
+    let outL = l * inGain;
+    let outR = r * inGain;
+    if (Math.abs(outL) > ceilLinear) {
+      outL = Math.sign(outL) * (ceilLinear + (Math.abs(outL) - ceilLinear) * 0.1);
+      outL = Math.max(-ceilLinear, Math.min(ceilLinear, outL));
+    }
+    if (Math.abs(outR) > ceilLinear) {
+      outR = Math.sign(outR) * (ceilLinear + (Math.abs(outR) - ceilLinear) * 0.1);
+      outR = Math.max(-ceilLinear, Math.min(ceilLinear, outR));
+    }
+    return [outL, outR];
+  }
+
+  #processEqamuzVocal(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const compOut = this.#processEqamuzComp(insId + '_lev', l, r, {
+      thresholdDb: -20,
+      ratio: 3.5,
+      attackMs: 8,
+      releaseMs: 120,
+      makeupDb: 2.5,
+      mix: 0.85
+    }, sampleRate);
+    const airGain = 1.25;
+    return [compOut[0] * airGain, compOut[1] * airGain];
+  }
+
+  #processEqamuzLead(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const drive = mod?.drive ?? 0.4;
+    const boost = Math.pow(10, (mod?.boostDb || 3.0) / 20);
+    const sat = this.#processEqamuzSaturator(l, r, { drive: drive * 0.8, characterMode: 'TUBE', mix: 0.6 });
+    return [sat[0] * boost, sat[1] * boost];
+  }
+
+  #processEqamuzElectric(insId, l, r, mod, sampleRate) {
+    if (mod && (mod.enabled === false || mod.bypass)) return [l, r];
+    const gain = mod?.gain ?? 0.5;
+    return this.#processEqamuzSaturator(l, r, { drive: gain, characterMode: 'TRANSISTOR', mix: 0.75 });
+  }
+
+  #processEqamuzSuite(insId, l, r, ab, sampleRate) {
+    if (!ab) return [l, r];
+    let out = [l, r];
+    if (ab.vocal?.enabled && !ab.vocal?.bypass) out = this.#processEqamuzVocal(insId + '_vocal', out[0], out[1], ab.vocal, sampleRate);
+    if (ab.lead?.enabled && !ab.lead?.bypass) out = this.#processEqamuzLead(insId + '_lead', out[0], out[1], ab.lead, sampleRate);
+    if (ab.electric?.enabled && !ab.electric?.bypass) out = this.#processEqamuzElectric(insId + '_electric', out[0], out[1], ab.electric, sampleRate);
+    if (ab.pro_eq?.enabled && !ab.pro_eq?.bypass) out = this.#processEqamuzProEq(insId + '_eq', out[0], out[1], ab.pro_eq, sampleRate);
+    if (ab.comp?.enabled && !ab.comp?.bypass) out = this.#processEqamuzComp(insId + '_comp', out[0], out[1], ab.comp, sampleRate);
+    if (ab.saturator?.enabled && !ab.saturator?.bypass) out = this.#processEqamuzSaturator(out[0], out[1], ab.saturator);
+    if (ab.delay?.enabled && !ab.delay?.bypass) out = this.#processEqamuzDelay(insId + '_delay', out[0], out[1], ab.delay, sampleRate);
+    if (ab.reverb?.enabled && !ab.reverb?.bypass) out = this.#processEqamuzReverb(insId + '_reverb', out[0], out[1], ab.reverb, sampleRate);
+    if (ab.imager?.enabled && !ab.imager?.bypass) out = this.#processEqamuzImager(out[0], out[1], ab.imager);
+    if (ab.limiter?.enabled && !ab.limiter?.bypass) out = this.#processEqamuzLimiter(insId + '_limiter', out[0], out[1], ab.limiter, sampleRate);
+    return out;
   }
 
   processStereo(l, r, sampleRate) {
@@ -629,9 +951,7 @@ class Track {
     }
     left = this.#compress(left, sampleRate);
     right = this.#compress(right, sampleRate);
-    left = this.#insertSample(left, sampleRate);
-    right = this.#insertSample(right, sampleRate);
-    return [left, right];
+    return this.#processInserts(left, right, sampleRate);
   }
 }
 

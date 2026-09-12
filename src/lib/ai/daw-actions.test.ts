@@ -44,6 +44,23 @@ describe('inferDawAction mix', () => {
     expect(inferDawAction('pon el golpe en el compás')?.name).toBe('snap_to_bar');
     expect(inferDawAction('entra en el compás 2|2')?.name).toBe('snap_to_bar');
   });
+
+  it('detects add_insert commands with modular EQAMUZ plugins and target instruments', () => {
+    const eqAction = inferDawAction('ponle un ecualizador a la voz');
+    expect(eqAction?.name).toBe('add_insert');
+    expect(eqAction?.args?.kind).toBe('eqamuz-pro-eq');
+    expect(eqAction?.args?.trackName).toBe('voz');
+
+    const compAction = inferDawAction('agrega un compresor al bajo');
+    expect(compAction?.name).toBe('add_insert');
+    expect(compAction?.args?.kind).toBe('eqamuz-comp');
+    expect(compAction?.args?.trackName).toBe('bajo');
+
+    const revAction = inferDawAction('ponle reverb al piano');
+    expect(revAction?.name).toBe('add_insert');
+    expect(revAction?.args?.kind).toBe('eqamuz-reverb');
+    expect(revAction?.args?.trackName).toBe('piano');
+  });
 });
 
 describe('mixStyleFromPrompt', () => {

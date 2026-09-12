@@ -68,6 +68,7 @@ export class EngineController {
       // Mixer sync: touches every field the engine cares about, so any edit
       // to a track re-runs this and the worklet stays authoritative-free.
       $effect(() => {
+        void project.mixerRevision;
         const tracks = project.project.tracks;
         const instruments = project.project.vRack.instruments;
 

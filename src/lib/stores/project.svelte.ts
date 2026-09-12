@@ -49,7 +49,7 @@ import { makeRackInstrument, type RackInstrument } from '$lib/core/vrack';
 import { newUUID } from '$lib/core/uuid';
 import { UndoStack } from './undo.svelte';
 
-export type BottomPanel = 'none' | 'mixer' | 'pianoRoll';
+export type BottomPanel = 'none' | 'mixer' | 'pianoRoll' | 'device';
 
 /** Track kinds the arrange + menu can create. Aux/bus share engine type `bus`. */
 export type CreateTrackKind = 'audio' | 'midi' | 'instrument' | 'aux' | 'bus';
@@ -78,6 +78,7 @@ export class ProjectStore {
   /** Absolute path of the open `.dawproj` package, null for an unsaved project. */
   packagePath = $state<string | null>(null);
   isDirty = $state(false);
+  mixerRevision = $state(0);
 
   selectedTrackID = $state<string | null>(null);
   selectedClipIDs = $state<string[]>([]);
@@ -394,6 +395,25 @@ export class ProjectStore {
     copy.id = newUUID();
     copy.name = `${source.name} copy`;
     copy.clips = copy.clips.map((clip) => ({ ...clip, id: newUUID() }));
+    if (copy.channelProcess?.inserts) {
+      copy.channelProcess.inserts = copy.channelProcess.inserts.map((ins) => {
+        const newInsertId = newUUID();
+        const newParams = { ...ins.params };
+        if (newParams.eqamuzState && typeof newParams.eqamuzState === 'object') {
+          newParams.eqamuzState = {
+            ...newParams.eqamuzState,
+            instanceId: `inst-${newInsertId.slice(0, 8)}`,
+            trackId: copy.id,
+            insertId: newInsertId
+          };
+        }
+        return {
+          ...ins,
+          id: newInsertId,
+          params: newParams
+        };
+      });
+    }
 
     this.mutate('Duplicate Track', () => {
       const index = this.project.tracks.findIndex((t) => t.id === id);
@@ -460,6 +480,11 @@ export class ProjectStore {
         mutator(t.channelProcess);
       })
     );
+    this.mixerRevision += 1;
+  }
+
+  touchMixer(): void {
+    this.mixerRevision += 1;
   }
 
   setFxBuses(mutator: (buses: FxBuses) => void): void {
@@ -467,6 +492,7 @@ export class ProjectStore {
       if (!this.project.fxBuses) this.project.fxBuses = makeFxBuses();
       mutator(this.project.fxBuses);
     });
+    this.mixerRevision += 1;
   }
 
   toggleTrackMute(id: string): void {

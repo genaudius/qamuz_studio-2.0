@@ -17,6 +17,7 @@
   import Inspector from '$lib/components/Inspector.svelte';
   import MasteringPanel from '$lib/components/MasteringPanel.svelte';
   import MixerPanel from '$lib/components/MixerPanel.svelte';
+  import DeviceRackBottomPanel from '$lib/components/DeviceRackBottomPanel.svelte';
   import MobileStudioNav from '$lib/components/MobileStudioNav.svelte';
   import PianoRoll from '$lib/components/PianoRoll.svelte';
   import Resizer from '$lib/components/Resizer.svelte';
@@ -62,6 +63,12 @@
     switch (workspace.module) {
       case 'mixer':
         projectStore.bottomPanel = 'mixer';
+        break;
+      case 'device':
+        if (projectStore.bottomPanelHeight < 340) {
+          projectStore.bottomPanelHeight = 360;
+        }
+        projectStore.bottomPanel = 'device';
         break;
       case 'pianoRoll':
         projectStore.bottomPanel = 'pianoRoll';
@@ -439,8 +446,10 @@
             <div class="bottom" style:height="{projectStore.bottomPanelHeight}px">
               {#if projectStore.bottomPanel === 'mixer'}
                 <MixerPanel />
-              {:else}
+              {:else if projectStore.bottomPanel === 'pianoRoll'}
                 <PianoRoll />
+              {:else if projectStore.bottomPanel === 'device'}
+                <DeviceRackBottomPanel />
               {/if}
             </div>
           {/if}

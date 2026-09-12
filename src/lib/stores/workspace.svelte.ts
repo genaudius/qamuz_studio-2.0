@@ -8,6 +8,7 @@ export type StudioModule =
   | 'maestro'
   | 'mixer'
   | 'pianoRoll'
+  | 'device'
   | 'vrack'
   | 'mastering'
   | 'export'
@@ -20,11 +21,22 @@ export class WorkspaceStore {
   sidebarHidden = $state(false);
   /** Track id for Channel Strip / PROCESS side panel. */
   channelStripTrackId = $state<string | null>(null);
+  /** Active EQAMUZ target: trackId, specific insertId, and moduleKind. */
+  eqamuzTarget = $state<{ trackId: string; insertId?: string; moduleKind?: string } | null>(null);
+
+  get eqamuzTrackId(): string | null {
+    return this.eqamuzTarget?.trackId ?? null;
+  }
+
+  get isEqamuzOpen(): boolean {
+    return this.eqamuzTarget !== null;
+  }
 
   readonly showsArrange = $derived(
     this.module === 'arrange' ||
       this.module === 'mixer' ||
       this.module === 'pianoRoll' ||
+      this.module === 'device' ||
       this.module === 'vrack' ||
       this.module === 'maestro'
   );
@@ -36,6 +48,7 @@ export class WorkspaceStore {
     this.module = module;
     if (module === 'analysis' || module === 'mastering' || module === 'export') {
       this.channelStripTrackId = null;
+      this.eqamuzTarget = null;
     }
   }
 
@@ -45,6 +58,14 @@ export class WorkspaceStore {
 
   closeChannelStrip(): void {
     this.channelStripTrackId = null;
+  }
+
+  openEqamuz(trackId: string, insertId?: string, moduleKind?: string): void {
+    this.eqamuzTarget = { trackId, insertId, moduleKind };
+  }
+
+  closeEqamuz(): void {
+    this.eqamuzTarget = null;
   }
 
   toggleSidebar(): void {
