@@ -18,6 +18,7 @@
   import { saasApi } from '$lib/saas-api';
   import { openMixSessionFromSong, openStemSessionFromSong } from '$lib/audio/open-stems-session';
   import { workProgress } from '$lib/stores/work-progress.svelte';
+  import { studioNotice } from '$lib/ui/studio-notice.svelte';
 
   interface Props {
     onOpen: (session: StudioSession, isNew: boolean) => void;
@@ -173,7 +174,13 @@
       if (extractStems) await openStemSessionFromSong(payload);
       else await openMixSessionFromSong(payload);
     } catch (error) {
+      console.error('[SessionGate] Error abriendo canción:', error);
       workProgress.fail((error as Error).message);
+      void studioNotice.alert({
+        title: 'No se pudo abrir la canción',
+        description: (error as Error).message || 'Ocurrió un error inesperado al cargar el audio.',
+        tone: 'danger'
+      });
       sessionGate.open('songs');
     } finally {
       launchingId = null;

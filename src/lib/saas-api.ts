@@ -75,6 +75,7 @@ function ensureListener() {
   window.addEventListener('message', (event: MessageEvent) => {
     const data = event.data;
     if (!data || data.type !== 'qamuz-studio:api-result' || typeof data.id !== 'string') return;
+    console.log(`[Studio2.0 saasApi] Received result for ${data.id}: HTTP ${data.status}`, data.error || (data.bytes ? `${data.bytes.byteLength} bytes` : 'JSON'));
     const waiter = pending.get(data.id);
     if (!waiter) return;
     pending.delete(data.id);
@@ -103,11 +104,13 @@ export async function saasApi(options: {
 
   ensureListener();
   const id = crypto.randomUUID();
+  console.log(`[Studio2.0 saasApi] PostMessage request: ${options.method ?? 'GET'} ${options.path} (id: ${id})`);
   const result = new Promise<SaasApiResult>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     window.setTimeout(() => {
       if (!pending.has(id)) return;
       pending.delete(id);
+      console.warn(`[Studio2.0 saasApi] Request ${id} timed out after 180s`);
       resolve({ status: 0, error: 'timeout' });
     }, 180000);
   });

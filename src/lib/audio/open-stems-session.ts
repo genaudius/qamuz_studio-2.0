@@ -117,6 +117,13 @@ function setStatus(message: string, tone: 'idle' | 'error' | 'success' = 'idle')
 async function fetchMixBytes(musicId: string): Promise<ArrayBuffer> {
   const remote = await saasApi({ path: `/api/music/${musicId}`, method: 'GET' });
   if (remote.bytes && remote.bytes.byteLength > 64) return remote.bytes;
+
+  if (remote.error || (remote.status && remote.status !== 200)) {
+    const errorBody = remote.json as { message?: string; error?: string } | undefined;
+    const msg = errorBody?.message || errorBody?.error || remote.error || `HTTP ${remote.status}`;
+    throw new Error(`No pude leer la canción: ${msg}`);
+  }
+
   const response = await fetch(`/api/music/${musicId}`, { credentials: 'include' });
   if (!response.ok) {
     throw new Error(remote.error || `No pude leer la canción (${remote.status || response.status})`);

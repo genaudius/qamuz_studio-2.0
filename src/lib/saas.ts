@@ -22,7 +22,7 @@ export function isEmbedded(): boolean {
   const params = new URLSearchParams(window.location.search);
   if (params.get('embedded') === '1') return true;
   try {
-    return window.self !== window.top;
+    return window.self !== window.top || window.parent !== window;
   } catch {
     return true;
   }
