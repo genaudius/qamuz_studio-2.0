@@ -9,6 +9,7 @@
   import MasterAgentChat from './MasterAgentChat.svelte';
   import { MASTER_STYLES } from '$lib/audio/mastering';
   import { hasMasterProAccess } from '$lib/entitlement';
+  import { account } from '$lib/account.svelte';
   import { goToSaasPath } from '$lib/saas';
   import { engine, workspace } from '$lib/stores';
   import { masterSession } from '$lib/stores/master.svelte';
@@ -18,7 +19,10 @@
   let addInput: HTMLInputElement | null = $state(null);
   let previewSource: AudioBufferSourceNode | null = null;
   let reprocessTimer: number | null = null;
-  const unlocked = hasMasterProAccess();
+  // Reactive: re-evaluates when the parent sends plan/admin via postMessage, so
+  // the gate unlocks as soon as a premium tier (pro/advanced/premium) OR an
+  // admin flag arrives.
+  const unlocked = $derived(hasMasterProAccess(account.plan, account.isAdmin));
   const hzMarks = ['20', '50', '100', '200', '500', '1k', '2k', '5k', '10k'];
 
   const peakDb = $derived(masterSession.wetReport?.peakDb ?? masterSession.dryReport?.peakDb ?? -60);
@@ -57,6 +61,10 @@
 
   onMount(() => {
     void masterSession.refreshLists();
+    // Best-effort: wake the audio engine so live meters and preview work.
+    // The mastering DSP itself no longer depends on this (uses an offline
+    // context fallback), but preview/metering need a running AudioContext.
+    void engine.backend.resume().catch(() => undefined);
   });
 
   onDestroy(() => {

@@ -128,11 +128,28 @@ export function logSpectrum(buffer: AudioBuffer, bands = 96): Float32Array {
   return out;
 }
 
-export function applyMastering(source: AudioBuffer, recipe: MasterRecipe): AudioBuffer {
-  const context = engine.backend.audioContext;
-  if (!context) throw new Error('The audio engine is not running yet');
+/**
+ * AudioBuffer factory for offline DSP. Prefers the live engine context, but
+ * falls back to a standalone OfflineAudioContext so mastering works even when
+ * the engine has not started (e.g. AudioContext blocked by autoplay policy in
+ * the embedded SaaS iframe). createBuffer never needs a running context.
+ */
+let scratchCtx: OfflineAudioContext | null = null;
+function makeBuffer(channels: number, length: number, sampleRate: number): AudioBuffer {
+  const live = engine.backend.audioContext;
+  if (live) return live.createBuffer(channels, length, sampleRate);
+  if (
+    !scratchCtx ||
+    scratchCtx.sampleRate !== sampleRate
+  ) {
+    // Length here is irrelevant; the context is only used as a buffer factory.
+    scratchCtx = new OfflineAudioContext(2, 1, sampleRate);
+  }
+  return scratchCtx.createBuffer(channels, length, sampleRate);
+}
 
-  const out = context.createBuffer(2, source.length, source.sampleRate);
+export function applyMastering(source: AudioBuffer, recipe: MasterRecipe): AudioBuffer {
+  const out = makeBuffer(2, source.length, source.sampleRate);
   const srcL = source.getChannelData(0);
   const srcR = source.numberOfChannels > 1 ? source.getChannelData(1) : srcL;
   const dstL = out.getChannelData(0);

@@ -4,19 +4,21 @@
  * after Studio posts ready.
  */
 
-import { readPlanTier, type PlanTier } from './entitlement';
+import { readPlanTier, readIsAdmin, type PlanTier } from './entitlement';
 import { isStandaloneStudio } from './saas';
 
 export type StudioAccount = {
   name: string;
   email: string;
   plan: PlanTier;
+  isAdmin: boolean;
 };
 
 export class AccountStore {
   name = $state('');
   email = $state('');
   plan = $state<PlanTier>(readPlanTier());
+  isAdmin = $state<boolean>(readIsAdmin());
 
   get displayName(): string {
     return this.name.trim() || this.email.split('@')[0] || 'Cuenta';
@@ -41,6 +43,7 @@ export class AccountStore {
     if (typeof info.name === 'string') this.name = info.name;
     if (typeof info.email === 'string') this.email = info.email;
     if (info.plan) this.plan = info.plan;
+    if (typeof info.isAdmin === 'boolean') this.isAdmin = info.isAdmin;
   }
 }
 
@@ -51,19 +54,21 @@ export function listenForAccount(): () => void {
   account.apply({
     name: params.get('name') ?? '',
     email: params.get('email') ?? '',
-    plan: readPlanTier()
+    plan: readPlanTier(),
+    isAdmin: readIsAdmin()
   });
 
   const onMessage = (event: MessageEvent) => {
     if (event.data?.type !== 'qamuz-studio:user' || !event.data.user) return;
-    const user = event.data.user as { name?: string; email?: string; plan?: string };
+    const user = event.data.user as { name?: string; email?: string; plan?: string; isAdmin?: boolean };
     const plan = String(user.plan ?? 'free').toLowerCase();
     account.apply({
       name: user.name ?? '',
       email: user.email ?? '',
       plan: (['free', 'starter', 'pro', 'advanced', 'premium'].includes(plan)
         ? plan
-        : 'free') as PlanTier
+        : 'free') as PlanTier,
+      isAdmin: Boolean(user.isAdmin)
     });
   };
   window.addEventListener('message', onMessage);
@@ -72,7 +77,7 @@ export function listenForAccount(): () => void {
     void fetch('/api/auth/me', { credentials: 'include' })
       .then((response) => (response.ok ? response.json() : null))
       .then((body) => {
-        const user = body?.user as { name?: string; email?: string; plan?: string } | undefined;
+        const user = body?.user as { name?: string; email?: string; plan?: string; isAdmin?: boolean } | undefined;
         if (!user) return;
         const plan = String(user.plan ?? 'free').toLowerCase();
         account.apply({
@@ -80,7 +85,8 @@ export function listenForAccount(): () => void {
           email: user.email ?? '',
           plan: (['free', 'starter', 'pro', 'advanced', 'premium'].includes(plan)
             ? plan
-            : 'free') as PlanTier
+            : 'free') as PlanTier,
+          isAdmin: Boolean(user.isAdmin)
         });
       })
       .catch(() => {
